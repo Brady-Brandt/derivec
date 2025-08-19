@@ -267,10 +267,13 @@
 
 #ifdef __DERIVEC_DEBUG__
     //useful for debugging the library
-    static const char* tag_to_string(uint64_t tag);
-    static const char* attribute_to_string(uint64_t att);
-    static const char* form_to_string(uint64_t form);
-    static const char* header_type_to_string(uint64_t h);
+    static const char* __derivec_tag_to_string__(uint64_t tag);
+    static const char* __derivec_attribute_to_string__(uint64_t att);
+    static const char* __derivec_form_to_string__(uint64_t form);
+    static const char* __derivec_header_type_to_string__(uint64_t h);
+    static void        __derivec_print_structs__();
+    static void        __derivec_print_enums__();
+    static void        __derivec_print_abbrevation_table__();
 #endif // __DERIVEC_DEBUG__
 
 
@@ -280,66 +283,49 @@ typedef struct{
     uint8_t type;
     uint8_t addr_size;
     uint32_t abbrev_offset;
-} __attribute__((packed))Dwarf5Header;
-
-
-typedef struct {
-    uint64_t id;
-} Dwarf5SkelHeader;
-
-
-typedef struct {
-    uint64_t signature;
-    uint32_t type_offset;
-} Dwarf5TypeHeader;
+} __DwarfCUHeader__;
 
 
 typedef struct{
    void* data;
    uint64_t size;
    uint64_t capacity;
-} ArrayList;
+} __Derivec_ArrayList__;
 
 
-#define array_list_create_cap(list, type, cap) \
+#define __derivec_array_list_create_cap__(list, type, cap) \
 do { \
     list.size = 0; \
     list.capacity = cap; \
     list.data = malloc(sizeof(type) * list.capacity); \
     memset(list.data, 0, sizeof(type) * list.capacity); \
-} while(0) 
+} while(0)
 
 
-#define array_list_resize(list, type) \
-do { \
-    list.capacity *= 2; \
-    list.data = realloc(list.data, sizeof(type) * list.capacity); \
-} while(0) 
-
-
-#define array_list_reserve(list, type, size) \
+#define __derivec_array_list_reserve__(list, type, size) \
 do { \
     if(size > list.capacity){\
         list.capacity = size; \
         list.data = realloc(list.data, sizeof(type) * list.capacity); \
     }\
-} while(0) 
+} while(0)
 
 
 
-#define array_list_append(list, type, value) \
+#define __derivec_array_list_append__(list, type, value) \
     do { \
         if(list.size == list.capacity){ \
-            array_list_resize(list, type); \
+            list.capacity *= 2; \
+            list.data = realloc(list.data, sizeof(type) * list.capacity); \
         } \
         type* temp = (type*)list.data; \
         temp[list.size] = value; \
         list.size++; \
     } while(0)
 
-#define array_list_get(list, type, index)((type*)list.data)[index]
+#define __derivec_array_list_get__(list, type, index)((type*)list.data)[index]
 
-#define array_list_delete(list) \
+#define __derivec_array_list_delete__(list) \
     do { \
         if(list.data != NULL) {  \
             if(list.capacity != 0) free(list.data); \
@@ -364,7 +350,7 @@ typedef struct {
     uint16_t section_header_size;
     uint16_t section_header_entries;
     uint16_t string_table_index;
-} ElfHeader;
+} __Derivec_ElfHeader__;
 
 
 typedef struct {
@@ -378,13 +364,13 @@ typedef struct {
     uint32_t info;
     uint64_t addralign;
     uint64_t entsize;
-} SectionHeader;
+} __Derivec_SectionHeader__;
 
 
 
 
 //more of a resizable lookup table than an array list
-static ArrayList abbreviations_table = {0};
+static __Derivec_ArrayList__ abbreviations_table = {0};
 
 
 
@@ -392,14 +378,14 @@ typedef struct {
     uint64_t attribute;
     uint64_t form;
     int64_t implicit_const;
-} AbbrevAttribute;
+} __Derivec_AbbrevAttribute__;
 
 
 typedef struct {
     uint64_t tag;
     uint8_t has_children;
-    ArrayList attributes;
-} AbbrevEntry;
+    __Derivec_ArrayList__ attributes;
+} __Derivec_AbbrevEntry__;
 
 
 
@@ -413,10 +399,11 @@ typedef struct {
 #define __DERIVEC_TYPE_UCHAR__    0x08
 #define __DERIVEC_TYPE_STRUCT__   0x50
 #define __DERIVEC_TYPE_SPTR__     0x51
-
+#define __DERIVEC_TYPE_ENUM__     0x52
+#define __DERIVEC_TYPE_EPTR__     0x53
 
 typedef struct{
-    char* name; 
+    char* name;
     uint32_t offset;
 
     uint32_t type;
@@ -427,31 +414,31 @@ typedef struct{
         uint32_t enum_index;
         uint32_t enum_offset;
     };
-} StructMember;
+} __Derivec_StructMember__;
 
 
 typedef struct {
     uint64_t offset;
-    ArrayList names;
-    ArrayList members;
-} StructType;
+    __Derivec_ArrayList__ names;
+    __Derivec_ArrayList__ members;
+} __Derivec_StructType__;
 
 
 typedef struct{
     char* name;
     uint64_t value;
-} EnumMember;
+} __Derivec_EnumMember__;
 
 
 typedef struct {
     uint64_t offset;
     char* name;
-    ArrayList members;
-} EnumType;
+    __Derivec_ArrayList__ members;
+} __Derivec_EnumType__;
 
 
-static ArrayList structs = {0};
-static ArrayList enums = {0};
+static __Derivec_ArrayList__ structs = {0};
+static __Derivec_ArrayList__ enums = {0};
 
 
 
@@ -459,39 +446,9 @@ typedef struct {
     uint64_t cu_offset;
     uint64_t debug_str_offset;
     uint64_t debug_line_str_offset;
-} Offsets;
+} __Derivec_Offsets__;
 
-
-
-
-
-static void print_structs(){
-    for(uint64_t i = 0; i < structs.size; i++){
-        StructType t = array_list_get(structs, StructType, i);
-        printf("Offset: 0x%lx, %s: \n", t.offset, array_list_get(t.names, char*, 0));
-        for(uint64_t j = 0; j < t.members.size; j++){
-            StructMember mem = array_list_get(t.members, StructMember, j);
-            printf("%d -> %s: %d\n", mem.offset, mem.name, mem.type);
-        }
-    }
-}
-
-
-static void print_enums(){
-    for(uint64_t i = 0; i < enums.size; i++){
-        EnumType t = array_list_get(enums, EnumType, i);
-        printf("%s: \n", t.name);
-        for(uint64_t j = 0; j < t.members.size; j++){
-            EnumMember mem = array_list_get(t.members, EnumMember, j);
-            printf("%s: %lu\n", mem.name, mem.value);
-        }
-    }
-}
-
-
-
-
-static uint64_t read_uleb128(FILE *f) {
+static uint64_t __derivec_uleb128__(FILE *f) {
     uint64_t result = 0;
     int shift = 0;
     int byte;
@@ -519,7 +476,7 @@ static uint64_t read_uleb128(FILE *f) {
 }
 
 
-static int64_t read_sleb128(FILE* f) {
+static int64_t __derivec_sleb128__(FILE* f) {
     int64_t value = 0;
     int shift = 0;
     int byte;
@@ -531,7 +488,7 @@ static int64_t read_sleb128(FILE* f) {
             fprintf(stderr, "Unexpected end of file while reading SLEB128: %lu\n", ftell(f));
             return 0;
         }
-        
+
 
         value |= ((int64_t)(byte & 0x7F)) << shift;
 
@@ -556,46 +513,32 @@ static int64_t read_sleb128(FILE* f) {
 }
 
 
-static bool struct_names_eq(ArrayList* names, char* type){
+static bool __derivec_struct_names_eq__(__Derivec_ArrayList__* names, char* type){
     for(uint64_t i = 0; i < names->size; i++){
-        char* type_name = array_list_get((*names), char*, i);
-
+        char* type_name = __derivec_array_list_get__((*names), char*, i);
         if(strcmp(type_name, type) == 0) return true;
-
     }
     return false;
 }
-
-#define __DERIVEC_TYPE_BPTR__     0x01
-#define __DERIVEC_TYPE_BOOL__     0x02
-#define __DERIVEC_TYPE_FLOAT__    0x04
-#define __DERIVEC_TYPE_SIGNED__   0x05
-#define __DERIVEC_TYPE_SCHAR__    0x06
-#define __DERIVEC_TYPE_UNSIGNED__ 0x07
-#define __DERIVEC_TYPE_UCHAR__    0x08
-#define __DERIVEC_TYPE_STRUCT__   0x50
-#define __DERIVEC_TYPE_SPTR__     0x51
-#define __DERIVEC_TYPE_ENUM__     0x52
-#define __DERIVEC_TYPE_EPTR__     0x53
 
 
 #define get_struct_member(type, base, offset) ((type)((uint8_t*)base + offset))
 
 
-void _print_structure(char* type, void* value, int indent){
+void __derivec_debug__(char* type, void* value, int indent){
     int start_indent = indent;
     for(uint64_t i = 0; i < structs.size; i++){
-        StructType st = array_list_get(structs, StructType, i);
-        if(struct_names_eq(&st.names, type)){
+        __Derivec_StructType__ st = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
+        if(__derivec_struct_names_eq__(&st.names, type)){
             printf("%*s {\n", indent, type);
             indent += 4;
             for(uint64_t j = 0; j < st.members.size; j++){
-                StructMember mem = array_list_get(st.members, StructMember, j);
+                __Derivec_StructMember__ mem = __derivec_array_list_get__(st.members, __Derivec_StructMember__, j);
                 printf("%*s%s: ", indent," ", mem.name);
 
                 switch (mem.type) {
                     case __DERIVEC_TYPE_BPTR__:
-                        if(*get_struct_member(char**, value, mem.offset) == NULL){ 
+                        if(*get_struct_member(char**, value, mem.offset) == NULL){
                             printf("NULL\n");
                         }
                         else if(mem.base_type == __DERIVEC_TYPE_SCHAR__ || mem.base_type == __DERIVEC_TYPE_UCHAR__){
@@ -621,17 +564,18 @@ void _print_structure(char* type, void* value, int indent){
                         printf("%lu\n", (uint64_t)*((uint8_t*)value + mem.offset));
                         break;
                     case __DERIVEC_TYPE_STRUCT__: {
-                        StructType* nested_struct = &array_list_get(structs, StructType, mem.struct_index);
-                        char* name = array_list_get(nested_struct->names, char*, 0);
-                        _print_structure(name, ((uint8_t*)value + mem.offset), indent);
+                        __Derivec_StructType__* nested_struct =
+                            &__derivec_array_list_get__(structs, __Derivec_StructType__, mem.struct_index);
+                        char* name = __derivec_array_list_get__(nested_struct->names, char*, 0);
+                        __derivec_debug__(name, ((uint8_t*)value + mem.offset), indent);
                         break;
                     }
                     case __DERIVEC_TYPE_ENUM__:
-                        EnumType* e = &array_list_get(enums, EnumType, mem.enum_index);
+                        __Derivec_EnumType__* e = &__derivec_array_list_get__(enums, __Derivec_EnumType__, mem.enum_index);
                         bool found_enum = false;
                         uint64_t enum_value = (uint64_t)*((uint8_t*)value + mem.offset);
                         for(uint64_t k = 0; k < e->members.size; k++){
-                            EnumMember emem = array_list_get(e->members, EnumMember, k);
+                            __Derivec_EnumMember__ emem = __derivec_array_list_get__(e->members, __Derivec_EnumMember__, k);
                             if(enum_value == emem.value){
                                 printf("%s\n", emem.name);
                                 found_enum = true;
@@ -651,111 +595,91 @@ void _print_structure(char* type, void* value, int indent){
 }
 
 
-#define print_structure(type, ptr) _print_structure(#type, ptr, 0)
+#define derivec_debug(struct_type, ptr) __derivec_debug__(#struct_type, ptr, 0)
 
-static void add_abbreviation_entry(uint64_t id, uint64_t tag, uint8_t has_children){
-    array_list_reserve(abbreviations_table, AbbrevEntry, id);
-    AbbrevEntry e = {0};
+static void __derivec_add_abbreviation_entry__(uint64_t id, uint64_t tag, uint8_t has_children){
+    __derivec_array_list_reserve__(abbreviations_table, __Derivec_AbbrevEntry__, id);
+    __Derivec_AbbrevEntry__ e = {0};
     e.tag = tag;
     e.has_children = has_children;
-    array_list_create_cap(e.attributes, AbbrevAttribute, 4);
-    ((AbbrevEntry*)abbreviations_table.data)[id - 1] = e;
+    __derivec_array_list_create_cap__(e.attributes, __Derivec_AbbrevAttribute__, 4);
+    ((__Derivec_AbbrevEntry__*)abbreviations_table.data)[id - 1] = e;
 }
 
 
-static void add_attribute_entry(uint64_t id, uint64_t attribute, uint64_t form, int64_t form2){
-    AbbrevEntry* abbrev_entry = &array_list_get(abbreviations_table, AbbrevEntry, id - 1);
-    AbbrevAttribute a = {0};
+static void __derivec_add_attribute_entry__(uint64_t id, uint64_t attribute, uint64_t form, int64_t form2){
+    __Derivec_AbbrevEntry__* abbrev_entry = &__derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
+    __Derivec_AbbrevAttribute__ a = {0};
     a.attribute = attribute;
     a.form = form;
     a.implicit_const = form2;
-    array_list_append(abbrev_entry->attributes, AbbrevAttribute, a);
+    __derivec_array_list_append__(abbrev_entry->attributes, __Derivec_AbbrevAttribute__, a);
 }
 
 
 
-static void create_table(){
+static void __derivec_create_table__(){
     if(abbreviations_table.data == 0){
-        array_list_create_cap(abbreviations_table, AbbrevEntry, 32);
+        __derivec_array_list_create_cap__(abbreviations_table, __Derivec_AbbrevEntry__, 32);
     } else{
         for(uint64_t i = 0; i < abbreviations_table.size; i++){
-            AbbrevEntry* e = &array_list_get(abbreviations_table, AbbrevEntry, i);
+            __Derivec_AbbrevEntry__* e = &__derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, i);
             e->attributes.size = 0;
             e->attributes.data = 0;
             e->attributes.capacity = 0;
-            array_list_delete(e->attributes);
+            __derivec_array_list_delete__(e->attributes);
         }
-        abbreviations_table.size = 0; 
+        abbreviations_table.size = 0;
     }
 }
 
 
-static void create_abbrevations_table(uint64_t offset, FILE* f){
+static void __derivec_create_abbrevations_table__(uint64_t offset, FILE* f){
     fpos_t pos;
     fgetpos(f, &pos);
     fseek(f, offset, SEEK_SET);
 
-    uint64_t abbrev_id = read_uleb128(f);
-    while(1){    
-        uint64_t tag = read_uleb128(f);
+    uint64_t abbrev_id = __derivec_uleb128__(f);
+    while(1){
+        uint64_t tag = __derivec_uleb128__(f);
         char has_children = fgetc(f);
-        add_abbreviation_entry(abbrev_id, tag, has_children);
+        __derivec_add_abbreviation_entry__(abbrev_id, tag, has_children);
         while(1){
-            uint64_t attribute = read_uleb128(f); 
+            uint64_t attribute = __derivec_uleb128__(f);
             if(attribute == 0){
 
-                uint64_t form = read_uleb128(f);
+                uint64_t form = __derivec_uleb128__(f);
                 if(form != 0){
                     fprintf(stderr,"Error Form should be 0\n");
                 }
                 break;
             }
-            uint64_t form = read_uleb128(f);
+            uint64_t form = __derivec_uleb128__(f);
             if(form == FORM_implicit_const){
-                uint64_t s = read_sleb128(f);
-                add_attribute_entry(abbrev_id, attribute, form, s);
-            
-            } else{ 
-                add_attribute_entry(abbrev_id, attribute, form, 0);
+                uint64_t s = __derivec_sleb128__(f);
+                __derivec_add_attribute_entry__(abbrev_id, attribute, form, s);
+
+            } else{
+                __derivec_add_attribute_entry__(abbrev_id, attribute, form, 0);
             }
 
         }
-        abbrev_id = read_uleb128(f);
-        if(abbrev_id == 0) break; 
+        abbrev_id = __derivec_uleb128__(f);
+        if(abbrev_id == 0) break;
     }
     fsetpos(f, &pos);
 }
 
 
-static void delete_abbrevations_table(){
+static void __derivec_delete_abbrevations_table__(){
     for(uint64_t i = 0; i < abbreviations_table.capacity; i++){
-        AbbrevEntry e = array_list_get(abbreviations_table, AbbrevEntry, i);
-        array_list_delete(e.attributes);
+        __Derivec_AbbrevEntry__ e = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, i);
+        __derivec_array_list_delete__(e.attributes);
     }
-    array_list_delete(abbreviations_table);
+    __derivec_array_list_delete__(abbreviations_table);
 }
 
-
-static void print_abbrevation_table(){
-    for(int i = 0; i < abbreviations_table.size; i++){
-        AbbrevEntry e = array_list_get(abbreviations_table, AbbrevEntry, i);
-        printf("Id: %d\n", i + 1);
-        printf("Tag: %s\n", tag_to_string(e.tag));
-        printf("Has Children: %d\n", e.has_children);
-
-        for(int j = 0; j < e.attributes.size; j++){
-            AbbrevAttribute abb = array_list_get(e.attributes, AbbrevAttribute, j);
-            if(abb.form == FORM_implicit_const){
-                printf("%s -> %s, %ld\n", attribute_to_string(abb.attribute), form_to_string(abb.form), abb.implicit_const);
-            } else{
-                printf("%s -> %s\n", attribute_to_string(abb.attribute), form_to_string(abb.form));
-            }
-        }
-    }
-}
-
-
-static char* get_string(FILE* f){
+static char* __derivec_get_string__(FILE* f){
     fpos_t pos;
     fgetpos(f, &pos);
 
@@ -765,8 +689,6 @@ static char* get_string(FILE* f){
         count++;
         if(c == 0) break;
     }
-
-
     fsetpos(f, &pos);
     char* result = (char*)malloc(count);
     if(result == NULL) return NULL;
@@ -778,13 +700,13 @@ static char* get_string(FILE* f){
 }
 
 
-static char* get_string_table_value(uint64_t string_table_offset, uint64_t offset_in_table, FILE* f){
+static char* __derivec_get_string_table_value__(uint64_t string_table_offset, uint64_t offset_in_table, FILE* f){
     fpos_t pos;
     fgetpos(f, &pos);
     fseek(f, string_table_offset + offset_in_table, SEEK_SET);
 
-    char* result = get_string(f);
-    
+    char* result = __derivec_get_string__(f);
+
     fsetpos(f, &pos);
     return result;
 }
@@ -792,33 +714,19 @@ static char* get_string_table_value(uint64_t string_table_offset, uint64_t offse
 
 
 
-static void skip_attribute(FILE* f, uint64_t form){
+static void __derivec_skip_attribute__(FILE* f, uint64_t form){
     switch (form) {
-        case FORM_strp:{
-            uint32_t str_offset = 0;
-            fread(&str_offset, sizeof(str_offset), 1, f);
+        case FORM_ref_addr:
+        case FORM_sec_offset:
+        case FORM_line_strp:
+        case FORM_data4:
+        case FORM_ref4:
+        case FORM_strp:
+            fseek(f, 4, SEEK_CUR);
             break;
-        } 
-        case FORM_line_strp: {
-            uint32_t str_offset = 0;
-            fread(&str_offset, sizeof(str_offset), 1, f);
-            break;
-        }
         case FORM_flag:
         case FORM_data1: {
             uint8_t data = 0;
-            fread(&data, sizeof(data), 1, f);
-            break;
-        }
-       case FORM_ref4: {
-            uint32_t off = 0;
-            fread(&off, sizeof(off), 1, f);
-            break;
-       }
-       case FORM_ref_addr:
-       case FORM_sec_offset:
-       case FORM_data4: {
-            uint32_t data = 0;
             fread(&data, sizeof(data), 1, f);
             break;
         }
@@ -834,7 +742,7 @@ static void skip_attribute(FILE* f, uint64_t form){
             break;
         }
         case FORM_exprloc:{
-            uint64_t expr_size = read_uleb128(f);
+            uint64_t expr_size = __derivec_uleb128__(f);
             //skip over the expression
             fseek(f, expr_size, SEEK_CUR);
             break;
@@ -850,66 +758,61 @@ static void skip_attribute(FILE* f, uint64_t form){
             break;
         }
         default:
-            printf("Not implemented: %s\n", form_to_string(form));
+            printf("Not implemented: %s\n", __derivec_form_to_string__(form));
             exit(1);
     }
 }
 
 
-
-
-
-
-
-static void add_name_from_typedef(FILE* f, Offsets* offset, char* name, uint32_t type_offset){
+static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offset, char* name, uint32_t type_offset){
     fpos_t pos;
     fgetpos(f, &pos);
     fseek(f, offset->cu_offset + type_offset, SEEK_SET);
 
-    uint64_t id = read_uleb128(f);
+    uint64_t id = __derivec_uleb128__(f);
 
-    AbbrevEntry entry = array_list_get(abbreviations_table, AbbrevEntry, id - 1);
+    __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
     if(entry.tag == TAG_structure_type){
         for(uint64_t i = 0; i < structs.size; i++){
-            StructType* st = &array_list_get(structs, StructType, i);
+            __Derivec_StructType__* st = &__derivec_array_list_get__(structs, __Derivec_StructType__, i);
             if(st->offset == type_offset){
-                array_list_append(st->names, char*, name);
+                __derivec_array_list_append__(st->names, char*, name);
                 fsetpos(f, &pos);
                 return;
-            } 
-        } 
+            }
+        }
         fprintf(stderr, "Could not find struct for typedef %s, 0x%x\n", name, type_offset);
     } else if (entry.tag == TAG_enumeration_type) {
         for(uint64_t i = 0; i < structs.size; i++){
-            EnumType* et = &array_list_get(enums, EnumType, i);
+            __Derivec_EnumType__* et = &__derivec_array_list_get__(enums, __Derivec_EnumType__, i);
             if(et->offset == type_offset && et->name == NULL){
                 et->name = name;
                 fsetpos(f, &pos);
                 return;
             }
         }
-        fprintf(stderr, "Could not find enum for typedef %s\n", name); 
+        fprintf(stderr, "Could not find enum for typedef %s\n", name);
     } else if(entry.tag == TAG_union_type){
-        fprintf(stderr, "Don't support typedefs for unions yet\n"); 
+        fprintf(stderr, "Don't support typedefs for unions yet\n");
         assert(false);
     } else if (entry.tag == TAG_base_type) {
         free(name);
         fsetpos(f, &pos);
         return;
-    } 
-    else{ 
+    }
+    else{
         for(int i = 0; i < entry.attributes.size; i++){
-            AbbrevAttribute abb = array_list_get(entry.attributes, AbbrevAttribute, i);
-            if(abb.attribute == AT_type){ 
+            __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(entry.attributes, __Derivec_AbbrevAttribute__, i);
+            if(abb.attribute == AT_type){
                 uint32_t new_type_offset = 0;
                 assert(abb.form == FORM_ref4 && "Expected Form ref4\n");
-                fread(&new_type_offset, sizeof(new_type_offset), 1, f); 
-                add_name_from_typedef(f, offset, name, new_type_offset); 
+                fread(&new_type_offset, sizeof(new_type_offset), 1, f);
+                __derivec_add_name_from_typedef__(f, offset, name, new_type_offset);
                 break;
 
             } else{
-                skip_attribute(f, abb.form);
+                __derivec_skip_attribute__(f, abb.form);
             }
         }
     }
@@ -918,19 +821,20 @@ static void add_name_from_typedef(FILE* f, Offsets* offset, char* name, uint32_t
 
 
 
-static void add_member_to_enum(char* name, uint64_t value){
-    EnumType* et = &array_list_get(enums, EnumType, enums.size - 1);
-    EnumMember mem = {name, value};
-    array_list_append(et->members, EnumMember, mem);
+static void __derivec_add_member_to_enum__(char* name, uint64_t value){
+    __Derivec_EnumType__* et = &__derivec_array_list_get__(enums, __Derivec_EnumType__, enums.size - 1);
+    __Derivec_EnumMember__ mem = {name, value};
+    __derivec_array_list_append__(et->members, __Derivec_EnumMember__, mem);
 }
 
-static void add_member_to_struct(FILE* f, Offsets* offset, char* name, uint32_t member_location, uint32_t member_type_offset){ 
-    StructType* st = &array_list_get(structs, StructType, structs.size - 1);
+static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offset, char* name, uint32_t member_location,
+        uint32_t member_type_offset){
+    __Derivec_StructType__* st = &__derivec_array_list_get__(structs, __Derivec_StructType__, structs.size - 1);
     fpos_t pos;
     fgetpos(f, &pos);
     fseek(f, offset->cu_offset + member_type_offset, SEEK_SET);
-    uint64_t id = read_uleb128(f);
-    AbbrevEntry entry = array_list_get(abbreviations_table, AbbrevEntry, id - 1);
+    uint64_t id = __derivec_uleb128__(f);
+    __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
     uint32_t type = 0;
     uint32_t ptr_type = 0;
@@ -942,12 +846,12 @@ static void add_member_to_struct(FILE* f, Offsets* offset, char* name, uint32_t 
             // the struct may not be in our structs list yet
             // so we need to store the offset
             ptr_type = member_type_offset;
-            break; 
+            break;
         } else if (entry.tag == TAG_enumeration_type) {
             type = (type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_EPTR__ : __DERIVEC_TYPE_ENUM__;
             ptr_type = member_type_offset;
             break;
-        } 
+        }
         else if (entry.tag == TAG_union_type){
             //don't support unions yet
             fsetpos(f, &pos);
@@ -960,10 +864,10 @@ static void add_member_to_struct(FILE* f, Offsets* offset, char* name, uint32_t 
 
             bool next_type = false;
             for(int j = 0; j < entry.attributes.size; j++){
-                AbbrevAttribute abb = array_list_get(entry.attributes, AbbrevAttribute, j);
+                __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(entry.attributes, __Derivec_AbbrevAttribute__, j);
                 if(abb.attribute == AT_encoding){
                     assert(abb.form == FORM_data1 && "Expected data1\n");
-                    if(type == __DERIVEC_TYPE_BPTR__){ 
+                    if(type == __DERIVEC_TYPE_BPTR__){
                         fread(&ptr_type, 1, 1, f);
                     } else{
                         fread(&type, 1, 1, f);
@@ -974,14 +878,14 @@ static void add_member_to_struct(FILE* f, Offsets* offset, char* name, uint32_t 
                     assert(abb.form == FORM_ref4 && "Expected ref4\n");
                     fread(&member_type_offset, 4, 1, f);
                     fseek(f, offset->cu_offset + member_type_offset, SEEK_SET);
-                    id = read_uleb128(f);
-                    entry = array_list_get(abbreviations_table, AbbrevEntry, id - 1);            
+                    id = __derivec_uleb128__(f);
+                    entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
                     next_type = true;
                     break;
-                } 
+                }
                 else{
-                    skip_attribute(f, abb.form);
-                } 
+                    __derivec_skip_attribute__(f, abb.form);
+                }
             }
             if(next_type) continue;
             break;
@@ -990,22 +894,22 @@ static void add_member_to_struct(FILE* f, Offsets* offset, char* name, uint32_t 
 
     fsetpos(f, &pos);
 
-    StructMember mem = {0};
+    __Derivec_StructMember__ mem = {0};
     mem.name = name;
     mem.offset = member_location;
     mem.type = type;
     mem.base_type = ptr_type;
-    array_list_append(st->members, StructMember, mem);
+    __derivec_array_list_append__(st->members, __Derivec_StructMember__, mem);
 }
 
 
-static char* get_name(FILE* f, Offsets* offsets, uint64_t form){
+static char* __derivec_get_name__(FILE* f, __Derivec_Offsets__* offsets, uint64_t form){
     if(form == FORM_strp){
         uint32_t str_offset = 0;
         fread(&str_offset, sizeof(str_offset), 1, f);
-        return get_string_table_value(offsets->debug_str_offset, str_offset, f);
+        return __derivec_get_string_table_value__(offsets->debug_str_offset, str_offset, f);
     } else if (form == FORM_string) {
-        return get_string(f); 
+        return __derivec_get_string__(f);
     } else{
         fprintf(stderr, "Expected form strp or string for struct name\n");
         assert(false && "Not implemented");
@@ -1013,14 +917,16 @@ static char* get_name(FILE* f, Offsets* offsets, uint64_t form){
 }
 
 
-static void replace_struct_offset(uint64_t struct_start, uint64_t enum_start){
+// Every struct that has a member of type struct or enum needs to have the offset
+// replaced with an index into either the structs or enums list
+static void __derivec_replace_struct_offset__(uint64_t struct_start, uint64_t enum_start){
     for(uint64_t i = struct_start; i < structs.size; i++) {
-        StructType* st = &array_list_get(structs, StructType, i);
+        __Derivec_StructType__* st = &__derivec_array_list_get__(structs, __Derivec_StructType__, i);
         for(uint64_t j = 0; j < st->members.size; j++){
-            StructMember* mem = &array_list_get(st->members, StructMember, j);
+            __Derivec_StructMember__* mem = &__derivec_array_list_get__(st->members, __Derivec_StructMember__, j);
             if(mem->type == __DERIVEC_TYPE_STRUCT__ || mem->type == __DERIVEC_TYPE_SPTR__){
                 for(uint64_t k = struct_start; k < structs.size; k++) {
-                    StructType* new_st = &array_list_get(structs, StructType, k);
+                    __Derivec_StructType__* new_st = &__derivec_array_list_get__(structs, __Derivec_StructType__, k);
                     if(new_st->offset == mem->struct_offset){
                         mem->struct_index = k;
                         break;
@@ -1028,42 +934,40 @@ static void replace_struct_offset(uint64_t struct_start, uint64_t enum_start){
                 }
             } else if (mem->type == __DERIVEC_TYPE_ENUM__ || mem->type == __DERIVEC_TYPE_EPTR__) {
                 for(uint64_t k = enum_start; k < enums.size; k++) {
-                    EnumType* e = &array_list_get(enums, EnumType, k);
+                    __Derivec_EnumType__* e = &__derivec_array_list_get__(enums, __Derivec_EnumType__, k);
                     if(e->offset == mem->struct_offset){
                         mem->enum_index = k;
                         break;
                     }
                 }
-            
+
             }
-        } 
+        }
     }
 }
 
-
-static uint64_t depth = 0;
-static void get_type_information(FILE* f, Offsets* offsets){
+static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offsets, int depth){
     while(1){
         uint64_t offset = ftell(f);
 
-        uint64_t id = read_uleb128(f);
+        uint64_t id = __derivec_uleb128__(f);
         if(id == 0) return;
-        
-        AbbrevEntry entry = array_list_get(abbreviations_table, AbbrevEntry, id - 1);
+
+        __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
 
         if(entry.tag == TAG_structure_type){
-            StructType t = {0};
+            __Derivec_StructType__ t = {0};
             t.offset = offset - offsets->cu_offset;
-            array_list_create_cap(t.names, char*, 1);
-            array_list_create_cap(t.members, StructMember, 2);
-            array_list_append(structs, StructType, t);
+            __derivec_array_list_create_cap__(t.names, char*, 1);
+            __derivec_array_list_create_cap__(t.members, __Derivec_StructMember__, 2);
+            __derivec_array_list_append__(structs, __Derivec_StructType__, t);
         } else if (entry.tag == TAG_enumeration_type) {
-            EnumType t = {0};
+            __Derivec_EnumType__ t = {0};
             t.offset = offset - offsets->cu_offset;
             t.name = NULL;
-            array_list_create_cap(t.members, EnumMember, 2);
-            array_list_append(enums, EnumType, t);
+            __derivec_array_list_create_cap__(t.members, __Derivec_EnumMember__, 2);
+            __derivec_array_list_append__(enums, __Derivec_EnumType__, t);
         }
 
 
@@ -1077,28 +981,28 @@ static void get_type_information(FILE* f, Offsets* offsets){
         uint64_t enum_value = 0;
 
         for(int j = 0; j < entry.attributes.size; j++){
-            AbbrevAttribute abb = array_list_get(entry.attributes, AbbrevAttribute, j);
+            __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(entry.attributes, __Derivec_AbbrevAttribute__, j);
 
             if(abb.attribute == AT_name){
                 switch (entry.tag) {
                     case TAG_structure_type: {
-                        StructType* st = &array_list_get(structs, StructType,structs.size - 1);
-                        char* name = get_name(f, offsets, abb.form);
-                        array_list_append(st->names, char*, name);
+                        __Derivec_StructType__ * st = &__derivec_array_list_get__(structs, __Derivec_StructType__,structs.size - 1);
+                        char* name = __derivec_get_name__(f, offsets, abb.form);
+                        __derivec_array_list_append__(st->names, char*, name);
                         break;
                     }
                     case TAG_enumeration_type: {
-                        EnumType* et = &array_list_get(enums, EnumType,enums.size - 1);
-                        et->name = get_name(f, offsets, abb.form);
+                        __Derivec_EnumType__* et = &__derivec_array_list_get__(enums, __Derivec_EnumType__,enums.size - 1);
+                        et->name = __derivec_get_name__(f, offsets, abb.form);
                         break;
                     }
                     case TAG_typedef:
                     case TAG_member:
                     case TAG_enumerator:
-                        name = get_name(f, offsets, abb.form);
+                        name = __derivec_get_name__(f, offsets, abb.form);
                         break;
                     default:
-                        skip_attribute(f, abb.form);
+                        __derivec_skip_attribute__(f, abb.form);
                 }
 
             } else if (abb.attribute == AT_type) {
@@ -1107,10 +1011,10 @@ static void get_type_information(FILE* f, Offsets* offsets){
                     fread(&type_offset, sizeof(type_offset), 1, f);
                 } else if (entry.tag == TAG_member){
                     assert(abb.form == FORM_ref4 && "Expected Form ref4\n");
-                    fread(&struct_member_type_offset, sizeof(struct_member_type_offset), 1, f); 
+                    fread(&struct_member_type_offset, sizeof(struct_member_type_offset), 1, f);
                 } else{
-                    skip_attribute(f, abb.form);
-                } 
+                    __derivec_skip_attribute__(f, abb.form);
+                }
 
             } else if (abb.attribute == AT_data_member_location && entry.tag == TAG_member) {
                 is_struct = true;
@@ -1124,12 +1028,12 @@ static void get_type_information(FILE* f, Offsets* offsets){
                 else if(abb.form == FORM_data4) size = 4;
                 else if(abb.form == FORM_data8) size = 8;
                 else{
-                    fprintf(stderr, "INVALID form for enum member: %s", form_to_string(abb.form));
+                    fprintf(stderr, "INVALID form for enum member: %s", __derivec_form_to_string__(abb.form));
                     assert(false && "Not implemented");
                 }
                 fread(&enum_value, size, 1, f);
             } else{
-                skip_attribute(f, abb.form);
+                __derivec_skip_attribute__(f, abb.form);
             }
         }
 
@@ -1137,18 +1041,17 @@ static void get_type_information(FILE* f, Offsets* offsets){
             if(type_offset == 0){
                 free(name);
             } else{
-                add_name_from_typedef(f, offsets, name, type_offset);
+                __derivec_add_name_from_typedef__(f, offsets, name, type_offset);
             }
         } else if (entry.tag == TAG_member && is_struct){
-            add_member_to_struct(f, offsets, name, member_location, struct_member_type_offset);
+            __derivec_add_member_to_struct__(f, offsets, name, member_location,
+                    struct_member_type_offset);
         } else if (entry.tag == TAG_enumerator) {
-            add_member_to_enum(name, enum_value); 
+            __derivec_add_member_to_enum__(name, enum_value);
         }
 
         if(entry.has_children){
-            depth++;
-            get_type_information(f, offsets);
-            depth--;
+            __derivec_get_type_information__(f, offsets, depth + 1);
         }
 
         //root doesn't have siblings
@@ -1160,13 +1063,13 @@ static void get_type_information(FILE* f, Offsets* offsets){
 
 
 
-static bool strtable_streq(FILE* f, SectionHeader* string_table, uint32_t name, const char* string){
+static bool __derivec_strtable_streq__(FILE* f, __Derivec_SectionHeader__* string_table, uint32_t name, const char* string){
     fpos_t pos;
     fgetpos(f, &pos);
     fseek(f, string_table->offset + name,SEEK_SET);
     int i = 0;
     char c1,c2;
-    while(1){ 
+    while(1){
         c1 = fgetc(f);
         c2 = string[i++];
 
@@ -1182,7 +1085,7 @@ static bool strtable_streq(FILE* f, SectionHeader* string_table, uint32_t name, 
 }
 
 
-bool init_derive_debug(const char* file_name){
+bool derivec_init(const char* file_name){
     FILE* f = fopen(file_name, "rb");
     if(f == NULL){
         fprintf(stderr, "Failed to open %s\n", file_name);
@@ -1191,37 +1094,37 @@ bool init_derive_debug(const char* file_name){
 
 
 
-    ElfHeader h = {0};
+    __Derivec_ElfHeader__ h = {0};
     fread(&h, sizeof(h), 1, f);
 
     //read section header table
     fseek(f, h.section_header_offset, SEEK_SET);
 
-    SectionHeader st = {0};
+    __Derivec_SectionHeader__ st = {0};
     fseek(f, h.section_header_offset + h.section_header_size * h.string_table_index, SEEK_SET);
     fread(&st, sizeof(st), 1, f);
 
     fseek(f, h.section_header_offset, SEEK_SET);
 
     //get the abbrevation & debug string table
-    SectionHeader debug_abbrev = {0};
-    SectionHeader debug_str = {0};
-    SectionHeader debug_line_str = {0};
-    SectionHeader debug_info = {0};
+    __Derivec_SectionHeader__ debug_abbrev = {0};
+    __Derivec_SectionHeader__ debug_str = {0};
+    __Derivec_SectionHeader__ debug_line_str = {0};
+    __Derivec_SectionHeader__ debug_info = {0};
 
     bool found_debug = false;
     for(int i = 0; i < h.section_header_entries; i++){
-        SectionHeader temp = {0};
+        __Derivec_SectionHeader__ temp = {0};
         fread(&temp, sizeof(temp), 1, f);
-        if(strtable_streq(f, &st, temp.name, ".debug_abbrev")){
-            memcpy(&debug_abbrev, &temp, sizeof(SectionHeader));
+        if(__derivec_strtable_streq__(f, &st, temp.name, ".debug_abbrev")){
+            memcpy(&debug_abbrev, &temp, sizeof(__Derivec_SectionHeader__));
         }
-        else if(strtable_streq(f, &st, temp.name, ".debug_str")){
-            memcpy(&debug_str, &temp, sizeof(SectionHeader));
-        }else if(strtable_streq(f, &st, temp.name,".debug_line_str")){
-            memcpy(&debug_line_str, &temp, sizeof(SectionHeader));
-        } else if(strtable_streq(f, &st, temp.name,".debug_info")){
-            memcpy(&debug_info, &temp, sizeof(SectionHeader));
+        else if(__derivec_strtable_streq__(f, &st, temp.name, ".debug_str")){
+            memcpy(&debug_str, &temp, sizeof(__Derivec_SectionHeader__));
+        }else if(__derivec_strtable_streq__(f, &st, temp.name,".debug_line_str")){
+            memcpy(&debug_line_str, &temp, sizeof(__Derivec_SectionHeader__));
+        } else if(__derivec_strtable_streq__(f, &st, temp.name,".debug_info")){
+            memcpy(&debug_info, &temp, sizeof(__Derivec_SectionHeader__));
             found_debug = true;
         }
 
@@ -1234,34 +1137,34 @@ bool init_derive_debug(const char* file_name){
 
 
 
-    array_list_create_cap(structs,StructType, 8);
-    array_list_create_cap(enums,EnumType, 8);
+    __derivec_array_list_create_cap__(structs,__Derivec_StructType__, 8);
+    __derivec_array_list_create_cap__(enums,__Derivec_EnumType__, 8);
 
     uint64_t struct_start = 0;
     uint64_t enum_start = 0;
- 
+
     fseek(f, debug_info.offset, SEEK_SET);
     uint64_t start = debug_info.offset;
 
-    Offsets offsets = {0};
+    __Derivec_Offsets__ offsets = {0};
     offsets.debug_line_str_offset = debug_line_str.offset;
     offsets.debug_str_offset = debug_str.offset;
 
     while(ftell(f) - start < debug_info.size){
-        Dwarf5Header ch = {0};
+        __DwarfCUHeader__ ch = {0};
         offsets.cu_offset = ftell(f);
-        fread(&ch, sizeof(Dwarf5Header), 1, f);
+        fread(&ch, sizeof(__DwarfCUHeader__), 1, f);
         printf("Length: %d\n", ch.length);
         printf("Version: %d\n", ch.version);
-        printf("Type: %s\n", header_type_to_string(ch.type));
+        printf("Type: %s\n", __derivec_header_type_to_string__(ch.type));
         printf("Address Size: %d\n", ch.addr_size);
         printf("Abbrev Offset: %d\n", ch.abbrev_offset);
         switch(ch.type){
             case UT_compile:
             case UT_partial: {
-                create_abbrevations_table(debug_abbrev.offset + ch.abbrev_offset, f);
-                get_type_information(f, &offsets);
-                replace_struct_offset(struct_start, enum_start);
+                __derivec_create_abbrevations_table__(debug_abbrev.offset + ch.abbrev_offset, f);
+                __derivec_get_type_information__(f, &offsets, 0);
+                __derivec_replace_struct_offset__(struct_start, enum_start);
                 struct_start = structs.size;
                 enum_start = enums.size;
                 //print_structs();
@@ -1288,7 +1191,7 @@ bool init_derive_debug(const char* file_name){
             }
         }
     }
-    delete_abbrevations_table();
+    __derivec_delete_abbrevations_table__();
     return true;
 }
 
@@ -1298,7 +1201,50 @@ bool init_derive_debug(const char* file_name){
 
 
 #ifdef __DERIVEC_DEBUG__
-static const char* header_type_to_string(uint64_t t){
+static void print_abbrevation_table(){
+    for(int i = 0; i < abbreviations_table.size; i++){
+        __Derivec_AbbrevEntry__ e = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, i);
+        printf("Id: %d\n", i + 1);
+        printf("Tag: %s\n", __derivec_tag_to_string__(e.tag));
+        printf("Has Children: %d\n", e.has_children);
+
+        for(int j = 0; j < e.attributes.size; j++){
+            __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(e.attributes, __Derivec_AbbrevAttribute__, j);
+            if(abb.form == FORM_implicit_const){
+                printf("%s -> %s, %ld\n", __derivec_attribute_to_string__(abb.attribute),
+                        __derivec_form_to_string__(abb.form), abb.implicit_const);
+            } else{
+                printf("%s -> %s\n", __derivec_attribute_to_string__(abb.attribute),
+                        __derivec_form_to_string__(abb.form));
+            }
+        }
+    }
+}
+
+static void __derivec_print_structs__(){
+    for(uint64_t i = 0; i < structs.size; i++){
+        __Derivec_StructType__ t = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
+        printf("Offset: 0x%lx, %s: \n", t.offset, __derivec_array_list_get__(t.names, char*, 0));
+        for(uint64_t j = 0; j < t.members.size; j++){
+            __Derivec_StructMember__ mem = __derivec_array_list_get__(t.members, __Derivec_StructMember__, j);
+            printf("%d -> %s: %d\n", mem.offset, mem.name, mem.type);
+        }
+    }
+}
+
+
+static void __derivec_print_enums__(){
+    for(uint64_t i = 0; i < enums.size; i++){
+        __Derivec_EnumType__ t = __derivec_array_list_get__(enums, __Derivec_EnumType__, i);
+        printf("%s: \n", t.name);
+        for(uint64_t j = 0; j < t.members.size; j++){
+            __Derivec_EnumMember__ mem = __derivec_array_list_get__(t.members, __Derivec_EnumMember__, j);
+            printf("%s: %lu\n", mem.name, mem.value);
+        }
+    }
+}
+
+static const char* __derivec_header_type_to_string__(uint64_t t){
     switch (t) {
         case UT_compile:
             return "compile";
@@ -1320,7 +1266,7 @@ static const char* header_type_to_string(uint64_t t){
     return "INVALID";
 }
 
-static const char* tag_to_string(uint64_t tag){
+static const char* __derivec_tag_to_string__(uint64_t tag){
     switch (tag) {
         case TAG_array_type:
             return "array_type";
@@ -1467,7 +1413,7 @@ static const char* tag_to_string(uint64_t tag){
 }
 
 
-static const char* attribute_to_string(uint64_t t){
+static const char* __derivec_attribute_to_string__(uint64_t t){
     switch (t) {
         case AT_sibling:
             return "AT_sibling";
@@ -1716,7 +1662,7 @@ static const char* attribute_to_string(uint64_t t){
 }
 
 
-static const char* form_to_string(uint64_t t){
+static const char* __derivec_form_to_string__(uint64_t t){
     switch (t) {
         case FORM_addr:
             return "FORM_addr";
@@ -1809,3 +1755,246 @@ static const char* form_to_string(uint64_t t){
 }
 
 #endif //__DERIVEC_DEBUG__
+
+#undef TAG_array_type
+#undef TAG_class_type
+#undef TAG_entry_point
+#undef TAG_enumeration_type
+#undef TAG_formal_parameter
+#undef TAG_imported_declaration
+#undef TAG_label
+#undef TAG_lexical_block
+#undef TAG_member
+#undef TAG_pointer_type
+#undef TAG_reference_type
+#undef TAG_compile_unit
+#undef TAG_string_type
+#undef TAG_structure_type
+#undef TAG_subroutine_type
+#undef TAG_typedef
+#undef TAG_union_type
+#undef TAG_unspecified_parameters
+#undef TAG_variant
+#undef TAG_common_block
+#undef TAG_common_inclusion
+#undef TAG_inheritance
+#undef TAG_inlined_subroutine
+#undef TAG_module
+#undef TAG_ptr_to_member_type
+#undef TAG_set_type
+#undef TAG_subrange_type
+#undef TAG_with_stmt
+#undef TAG_access_declaration
+#undef TAG_base_type
+#undef TAG_catch_block
+#undef TAG_const_type
+#undef TAG_constant
+#undef TAG_enumerator
+#undef TAG_file_type
+#undef TAG_friend
+#undef TAG_namelist
+#undef TAG_namelist_item
+#undef TAG_packed_type
+#undef TAG_subprogram
+#undef TAG_template_type_parameter
+#undef TAG_template_value_parameter
+#undef TAG_thrown_type
+#undef TAG_try_block
+#undef TAG_variant_part
+#undef TAG_variable
+#undef TAG_volatile_type
+#undef TAG_dwarf_procedure
+#undef TAG_restrict_type
+#undef TAG_interface_type
+#undef TAG_namespace
+#undef TAG_imported_module
+#undef TAG_unspecified_type
+#undef TAG_partial_unit
+#undef TAG_imported_unit
+#undef TAG_condition
+#undef TAG_shared_type
+#undef TAG_type_unit
+#undef TAG_rvalue_reference_type
+#undef TAG_template_alias
+#undef TAG_coarray_type
+#undef TAG_generic_subrange
+#undef TAG_dynamic_type
+#undef TAG_atomic_type
+#undef TAG_call_site
+#undef TAG_call_site_parameter
+#undef TAG_skeleton_unit
+#undef TAG_immutable_type
+#undef TAG_lo_user
+#undef TAG_hi_user
+#undef AT_sibling
+#undef AT_location
+#undef AT_name
+#undef AT_ordering
+#undef AT_byte_size
+#undef AT_bit_size
+#undef AT_stmt_list
+#undef AT_low_pc
+#undef AT_high_pc
+#undef AT_language
+#undef AT_discr
+#undef AT_discr_value
+#undef AT_visibility
+#undef AT_import
+#undef AT_string_length
+#undef AT_common_reference
+#undef AT_comp_dir
+#undef AT_const_value
+#undef AT_containing_type
+#undef AT_default_value
+#undef AT_inline
+#undef AT_is_optional
+#undef AT_lower_bound
+#undef AT_producer
+#undef AT_prototyped
+#undef AT_return_addr
+#undef AT_start_scope
+#undef AT_bit_stride
+#undef AT_upper_bound
+#undef AT_abstract_origin
+#undef AT_accessibility
+#undef AT_address_class
+#undef AT_artificial
+#undef AT_base_types
+#undef AT_calling_convention
+#undef AT_count
+#undef AT_data_member_location
+#undef AT_decl_column
+#undef AT_decl_file
+#undef AT_decl_line
+#undef AT_declaration
+#undef AT_discr_list
+#undef AT_encoding
+#undef AT_external
+#undef AT_frame_base
+#undef AT_friend
+#undef AT_identifier_case
+#undef AT_namelist_item
+#undef AT_priority
+#undef AT_segment
+#undef AT_specification
+#undef AT_static_link
+#undef AT_type
+#undef AT_use_location
+#undef AT_variable_parameter
+#undef AT_virtuality
+#undef AT_vtable_elem_location
+#undef AT_allocated
+#undef AT_associated
+#undef AT_data_location
+#undef AT_byte_stride
+#undef AT_entry_pc
+#undef AT_use_UTF
+#undef AT_extension
+#undef AT_ranges
+#undef AT_trampoline
+#undef AT_call_column
+#undef AT_call_file
+#undef AT_call_line
+#undef AT_description
+#undef AT_binary_scale
+#undef AT_decimal_scale
+#undef AT_small
+#undef AT_decimal_sign
+#undef AT_digit_count
+#undef AT_picture_string
+#undef AT_mutable
+#undef AT_threads_scaled
+#undef AT_explicit
+#undef AT_object_pointer
+#undef AT_endianity
+#undef AT_elemental
+#undef AT_pure
+#undef AT_recursive
+#undef AT_signature
+#undef AT_main_subprogram
+#undef AT_data_bit_offset
+#undef AT_const_expr
+#undef AT_enum_class
+#undef AT_linkage_name
+#undef AT_string_length_bit_size
+#undef AT_string_length_byte_size
+#undef AT_rank
+#undef AT_str_offsets_base
+#undef AT_addr_base
+#undef AT_rnglists_base
+#undef AT_dwo_name
+#undef AT_reference
+#undef AT_rvalue_reference
+#undef AT_macros
+#undef AT_call_all_calls
+#undef AT_call_all_source_calls
+#undef AT_call_all_tail_calls
+#undef AT_call_return_pc
+#undef AT_call_value
+#undef AT_call_origin
+#undef AT_call_parameter
+#undef AT_call_pc
+#undef AT_call_tail_call
+#undef AT_call_target
+#undef AT_call_target_clobbered
+#undef AT_call_data_location
+#undef AT_call_data_value
+#undef AT_noreturn
+#undef AT_alignment
+#undef AT_export_symbols
+#undef AT_deleted
+#undef AT_defaulted
+#undef AT_loclists_base
+#undef AT_lo_user
+#undef AT_hi_user
+#undef FORM_addr
+#undef FORM_block2
+#undef FORM_block4
+#undef FORM_data2
+#undef FORM_data4
+#undef FORM_data8
+#undef FORM_string
+#undef FORM_block
+#undef FORM_block1
+#undef FORM_data1
+#undef FORM_flag
+#undef FORM_sdata
+#undef FORM_strp
+#undef FORM_udata
+#undef FORM_ref_addr
+#undef FORM_ref1
+#undef FORM_ref2
+#undef FORM_ref4
+#undef FORM_ref8
+#undef FORM_ref_udata
+#undef FORM_indirect
+#undef FORM_sec_offset
+#undef FORM_exprloc
+#undef FORM_flag_present
+#undef FORM_strx
+#undef FORM_addrx
+#undef FORM_ref_sup4
+#undef FORM_strp_sup
+#undef FORM_data16
+#undef FORM_line_strp
+#undef FORM_ref_sig8
+#undef FORM_implicit_const
+#undef FORM_loclistx
+#undef FORM_rnglistx
+#undef FORM_ref_sup8
+#undef FORM_strx1
+#undef FORM_strx2
+#undef FORM_strx3
+#undef FORM_strx4
+#undef FORM_addrx1
+#undef FORM_addrx2
+#undef FORM_addrx3
+#undef FORM_addrx4
+#undef UT_compile
+#undef UT_type
+#undef UT_partial
+#undef UT_skeleton
+#undef UT_split_compile
+#undef UT_split_type
+#undef UT_lo_user
+#undef UT_hi_user
