@@ -1,3 +1,12 @@
+#pragma once
+
+bool derivec_init(const char* file_name);
+
+void __derivec_debug__(char* type, void* value, int indent);
+
+#define derivec_debug(struct_type, ptr) __derivec_debug__(#struct_type, ptr, 0)
+
+#ifdef DERIVEC_IMPLEMENTATION
 #include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -527,9 +536,11 @@ static bool __derivec_struct_names_eq__(__Derivec_ArrayList__* names, char* type
 
 void __derivec_debug__(char* type, void* value, int indent){
     int start_indent = indent;
+    bool found_struct = false;
     for(uint64_t i = 0; i < structs.size; i++){
         __Derivec_StructType__ st = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
         if(__derivec_struct_names_eq__(&st.names, type)){
+            found_struct = true;
             printf("%*s {\n", indent, type);
             indent += 4;
             for(uint64_t j = 0; j < st.members.size; j++){
@@ -591,6 +602,10 @@ void __derivec_debug__(char* type, void* value, int indent){
             printf("%*s}\n", start_indent," ");
             break;
         }
+    }
+    if(!found_struct){
+        printf("Couldn't find struct of type %s\n", type);
+
     }
 }
 
@@ -747,6 +762,12 @@ static void __derivec_skip_attribute__(FILE* f, uint64_t form){
             fseek(f, expr_size, SEEK_CUR);
             break;
         }
+        case FORM_udata:
+            __derivec_uleb128__(f);
+            break;
+        case FORM_sdata:
+            __derivec_sleb128__(f);
+            break;
         case FORM_flag_present:
         case FORM_implicit_const:
             break;
@@ -1022,16 +1043,16 @@ static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offse
                 fread(&member_location, 1, 1, f);
 
             } else if (abb.attribute == AT_const_value && entry.tag == TAG_enumerator) {
-                int size = 0;
-                if(abb.form == FORM_data1) size = 1;
-                else if(abb.form == FORM_data2) size = 2;
-                else if(abb.form == FORM_data4) size = 4;
-                else if(abb.form == FORM_data8) size = 8;
+                if(abb.form == FORM_data1) fread(&enum_value, 1, 1, f);
+                else if(abb.form == FORM_data2) fread(&enum_value, 2, 1, f);
+                else if(abb.form == FORM_data4) fread(&enum_value, 4, 1, f);
+                else if(abb.form == FORM_data8) fread(&enum_value, 8, 1, f);
+                else if (abb.form == FORM_udata) enum_value = __derivec_uleb128__(f);
+                else if (abb.form == FORM_sdata) enum_value = __derivec_sleb128__(f);
                 else{
                     fprintf(stderr, "INVALID form for enum member: %s", __derivec_form_to_string__(abb.form));
                     assert(false && "Not implemented");
                 }
-                fread(&enum_value, size, 1, f);
             } else{
                 __derivec_skip_attribute__(f, abb.form);
             }
@@ -1192,10 +1213,35 @@ bool derivec_init(const char* file_name){
         }
     }
     __derivec_delete_abbrevations_table__();
+    fclose(f);
     return true;
 }
 
+//TODO: FIX memory leaks
+void derivec_terminate(){
+    for(uint64_t i = 0; i < structs.size; i++){
+        __Derivec_StructType__ t = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
+        for(uint64_t j = 0; j < t.names.size; j++){
+            free(__derivec_array_list_get__(t.names, char*, j));
+        }
+        for(uint64_t j = 0; j < t.members.size; j++){
+            free(__derivec_array_list_get__(t.members, __Derivec_StructMember__, j).name);
+        }
+        __derivec_array_list_delete__(t.members);
+    }
+    __derivec_array_list_delete__(structs);
 
+
+    for(uint64_t i = 0; i < enums.size; i++){
+        __Derivec_EnumType__ t = __derivec_array_list_get__(enums, __Derivec_EnumType__, i);
+        free(t.name);
+        for(uint64_t j = 0; j < t.members.size; j++){
+            free(__derivec_array_list_get__(t.members, __Derivec_EnumMember__, j).name);
+        }
+        __derivec_array_list_delete__(t.members);
+    }
+    __derivec_array_list_delete__(enums);
+}
 
 
 
@@ -1998,3 +2044,4 @@ static const char* __derivec_form_to_string__(uint64_t t){
 #undef UT_split_type
 #undef UT_lo_user
 #undef UT_hi_user
+#endif // DERIVEC_IMPLEMENTATION
