@@ -424,6 +424,8 @@ typedef struct{
         uint32_t base_type;
         uint32_t struct_offset;
         uint32_t struct_index;
+        uint32_t enum_index;
+        uint32_t enum_offset;
     };
 } StructMember;
 
@@ -573,9 +575,12 @@ static bool struct_names_eq(ArrayList* names, char* type){
 #define __DERIVEC_TYPE_UCHAR__    0x08
 #define __DERIVEC_TYPE_STRUCT__   0x50
 #define __DERIVEC_TYPE_SPTR__     0x51
+#define __DERIVEC_TYPE_ENUM__     0x52
+#define __DERIVEC_TYPE_EPTR__     0x53
 
 
 #define get_struct_member(type, base, offset) ((type)((uint8_t*)base + offset))
+
 
 void _print_structure(char* type, void* value, int indent){
     int start_indent = indent;
@@ -614,20 +619,34 @@ void _print_structure(char* type, void* value, int indent){
                         break;
                     case __DERIVEC_TYPE_UNSIGNED__:
                         printf("%lu\n", (uint64_t)*((uint8_t*)value + mem.offset));
-                        break; 
-
-                    case __DERIVEC_TYPE_STRUCT__:
+                        break;
+                    case __DERIVEC_TYPE_STRUCT__: {
                         StructType* nested_struct = &array_list_get(structs, StructType, mem.struct_index);
                         char* name = array_list_get(nested_struct->names, char*, 0);
                         _print_structure(name, ((uint8_t*)value + mem.offset), indent);
                         break;
+                    }
+                    case __DERIVEC_TYPE_ENUM__:
+                        EnumType* e = &array_list_get(enums, EnumType, mem.enum_index);
+                        bool found_enum = false;
+                        uint64_t enum_value = (uint64_t)*((uint8_t*)value + mem.offset);
+                        for(uint64_t k = 0; k < e->members.size; k++){
+                            EnumMember emem = array_list_get(e->members, EnumMember, k);
+                            if(enum_value == emem.value){
+                                printf("%s\n", emem.name);
+                                found_enum = true;
+                                break;
+                            }
+                        }
+                        if(!found_enum){
+                            printf("%ld\n", enum_value);
+                        }
+                        break;
                 }
             }
-
             printf("%*s}\n", start_indent," ");
             break;
         }
-
     }
 }
 
@@ -922,9 +941,14 @@ static void add_member_to_struct(FILE* f, Offsets* offset, char* name, uint32_t 
             type = (type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_SPTR__ : __DERIVEC_TYPE_STRUCT__;
             // the struct may not be in our structs list yet
             // so we need to store the offset
-            ptr_type = member_type_offset; 
+            ptr_type = member_type_offset;
             break; 
-        } else if (entry.tag == TAG_union_type){
+        } else if (entry.tag == TAG_enumeration_type) {
+            type = (type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_EPTR__ : __DERIVEC_TYPE_ENUM__;
+            ptr_type = member_type_offset;
+            break;
+        } 
+        else if (entry.tag == TAG_union_type){
             //don't support unions yet
             fsetpos(f, &pos);
             return;
@@ -989,19 +1013,28 @@ static char* get_name(FILE* f, Offsets* offsets, uint64_t form){
 }
 
 
-static void replace_struct_offset(uint64_t start){
-    for(uint64_t i = start; i < structs.size; i++) {
+static void replace_struct_offset(uint64_t struct_start, uint64_t enum_start){
+    for(uint64_t i = struct_start; i < structs.size; i++) {
         StructType* st = &array_list_get(structs, StructType, i);
         for(uint64_t j = 0; j < st->members.size; j++){
             StructMember* mem = &array_list_get(st->members, StructMember, j);
             if(mem->type == __DERIVEC_TYPE_STRUCT__ || mem->type == __DERIVEC_TYPE_SPTR__){
-                for(uint64_t k = start; k < structs.size; k++) {
+                for(uint64_t k = struct_start; k < structs.size; k++) {
                     StructType* new_st = &array_list_get(structs, StructType, k);
                     if(new_st->offset == mem->struct_offset){
                         mem->struct_index = k;
                         break;
                     }
                 }
+            } else if (mem->type == __DERIVEC_TYPE_ENUM__ || mem->type == __DERIVEC_TYPE_EPTR__) {
+                for(uint64_t k = enum_start; k < enums.size; k++) {
+                    EnumType* e = &array_list_get(enums, EnumType, k);
+                    if(e->offset == mem->struct_offset){
+                        mem->enum_index = k;
+                        break;
+                    }
+                }
+            
             }
         } 
     }
@@ -1205,6 +1238,7 @@ bool init_derive_debug(const char* file_name){
     array_list_create_cap(enums,EnumType, 8);
 
     uint64_t struct_start = 0;
+    uint64_t enum_start = 0;
  
     fseek(f, debug_info.offset, SEEK_SET);
     uint64_t start = debug_info.offset;
@@ -1227,8 +1261,9 @@ bool init_derive_debug(const char* file_name){
             case UT_partial: {
                 create_abbrevations_table(debug_abbrev.offset + ch.abbrev_offset, f);
                 get_type_information(f, &offsets);
-                replace_struct_offset(struct_start);
+                replace_struct_offset(struct_start, enum_start);
                 struct_start = structs.size;
+                enum_start = enums.size;
                 //print_structs();
                 //print_enums();
                 break;
