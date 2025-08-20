@@ -559,6 +559,9 @@ void __derivec_debug__(char* type, void* value, int indent){
                 printf("%*s%s: ", indent," ", mem.name);
 
                 switch (mem.type) {
+                    case __DERIVEC_TYPE_SPTR__:
+                        printf("%p\n", *get_struct_member(uint64_t**, value, mem.offset));
+                        break;
                     case __DERIVEC_TYPE_BPTR__:
                         if(*get_struct_member(char**, value, mem.offset) == NULL){
                             printf("NULL\n");
@@ -941,10 +944,18 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
                     // if the field was declared with type uint8_t/int8_t we print a number
                     // if it was declared with char we print a character
                     if(strcmp(tmp_name, "uint8_t") == 0){
-                        member.type = __DERIVEC_TYPE_UINT8__;
+                        if(member.type == __DERIVEC_TYPE_BPTR__){
+                            member.ptr_type = __DERIVEC_TYPE_UINT8__;
+                        } else{
+                            member.type = __DERIVEC_TYPE_UINT8__;
+                        }
                         found_type = true;
                     } else if (strcmp(tmp_name, "int8_t") == 0){ 
-                        member.type = __DERIVEC_TYPE_INT8__;
+                        if(member.type == __DERIVEC_TYPE_BPTR__){
+                            member.ptr_type = __DERIVEC_TYPE_INT8__;
+                        } else{
+                            member.type = __DERIVEC_TYPE_INT8__;
+                        }
                         found_type = true;
                     }
                     free(tmp_name);
