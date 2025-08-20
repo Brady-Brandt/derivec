@@ -406,6 +406,17 @@ typedef struct {
 #define __DERIVEC_TYPE_SCHAR__    0x06
 #define __DERIVEC_TYPE_UNSIGNED__ 0x07
 #define __DERIVEC_TYPE_UCHAR__    0x08
+
+#define __DERIVEC_TYPE_UINT8__    0x40
+#define __DERIVEC_TYPE_UINT16__   0x41
+#define __DERIVEC_TYPE_UINT32__   0x42
+#define __DERIVEC_TYPE_UINT64__   0x43
+
+#define __DERIVEC_TYPE_INT8__     0x44
+#define __DERIVEC_TYPE_INT16__    0x45
+#define __DERIVEC_TYPE_INT32__    0x46
+#define __DERIVEC_TYPE_INT64__    0x47
+
 #define __DERIVEC_TYPE_STRUCT__   0x50
 #define __DERIVEC_TYPE_SPTR__     0x51
 #define __DERIVEC_TYPE_ENUM__     0x52
@@ -417,7 +428,7 @@ typedef struct{
 
     uint32_t type;
     union {
-        uint32_t base_type;
+        uint32_t ptr_type;
         uint32_t struct_offset;
         uint32_t struct_index;
         uint32_t enum_index;
@@ -552,7 +563,7 @@ void __derivec_debug__(char* type, void* value, int indent){
                         if(*get_struct_member(char**, value, mem.offset) == NULL){
                             printf("NULL\n");
                         }
-                        else if(mem.base_type == __DERIVEC_TYPE_SCHAR__ || mem.base_type == __DERIVEC_TYPE_UCHAR__){
+                        else if(mem.ptr_type == __DERIVEC_TYPE_SCHAR__ || mem.ptr_type == __DERIVEC_TYPE_UCHAR__){
                             printf("%s\n", *get_struct_member(char**, value, mem.offset));
                         } else{
                             printf("%p\n", get_struct_member(void*, value, mem.offset));
@@ -573,6 +584,30 @@ void __derivec_debug__(char* type, void* value, int indent){
                         break;
                     case __DERIVEC_TYPE_UNSIGNED__:
                         printf("%lu\n", (uint64_t)*((uint8_t*)value + mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_UINT8__:
+                        printf("%u\n", *get_struct_member(uint8_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_INT8__:
+                        printf("%d\n", *get_struct_member(int8_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_UINT16__:
+                        printf("%u\n", *get_struct_member(uint16_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_INT16__:
+                        printf("%d\n", *get_struct_member(int16_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_UINT32__:
+                        printf("%u\n", *get_struct_member(uint32_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_INT32__:
+                        printf("%d\n", *get_struct_member(int32_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_UINT64__:
+                        printf("%lu\n", *get_struct_member(uint64_t*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_INT64__:
+                        printf("%ld\n", *get_struct_member(int64_t*, value, mem.offset));
                         break;
                     case __DERIVEC_TYPE_STRUCT__: {
                         __Derivec_StructType__* nested_struct =
@@ -726,7 +761,18 @@ static char* __derivec_get_string_table_value__(uint64_t string_table_offset, ui
     return result;
 }
 
-
+static char* __derivec_get_name__(FILE* f, __Derivec_Offsets__* offsets, uint64_t form){
+    if(form == FORM_strp){
+        uint32_t str_offset = 0;
+        fread(&str_offset, sizeof(str_offset), 1, f);
+        return __derivec_get_string_table_value__(offsets->debug_str_offset, str_offset, f);
+    } else if (form == FORM_string) {
+        return __derivec_get_string__(f);
+    } else{
+        fprintf(stderr, "Expected form strp or string for struct name\n");
+        assert(false && "Not implemented");
+    }
+}
 
 
 static void __derivec_skip_attribute__(FILE* f, uint64_t form){
@@ -841,7 +887,6 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
 }
 
 
-
 static void __derivec_add_member_to_enum__(char* name, uint64_t value){
     __Derivec_EnumType__* et = &__derivec_array_list_get__(enums, __Derivec_EnumType__, enums.size - 1);
     __Derivec_EnumMember__ mem = {name, value};
@@ -857,20 +902,23 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
     uint64_t id = __derivec_uleb128__(f);
     __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
-    uint32_t type = 0;
-    uint32_t ptr_type = 0;
+
+
+    __Derivec_StructMember__ member = {0};
+    member.name = name;
+    member.offset = member_location;
 
     bool found_type = false;
     while(!found_type){
         if (entry.tag == TAG_structure_type) {
-            type = (type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_SPTR__ : __DERIVEC_TYPE_STRUCT__;
+            member.type = (member.type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_SPTR__ : __DERIVEC_TYPE_STRUCT__;
             // the struct may not be in our structs list yet
             // so we need to store the offset
-            ptr_type = member_type_offset;
+            member.struct_offset = member_type_offset;
             break;
         } else if (entry.tag == TAG_enumeration_type) {
-            type = (type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_EPTR__ : __DERIVEC_TYPE_ENUM__;
-            ptr_type = member_type_offset;
+            member.type = (member.type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_EPTR__ : __DERIVEC_TYPE_ENUM__;
+            member.enum_offset = member_type_offset;
             break;
         }
         else if (entry.tag == TAG_union_type){
@@ -880,22 +928,40 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
         }
         else{
             if(entry.tag == TAG_pointer_type){
-                type = __DERIVEC_TYPE_BPTR__;
+                member.type =  __DERIVEC_TYPE_BPTR__;
             }
 
             bool next_type = false;
+            int size = 0;
             for(int j = 0; j < entry.attributes.size; j++){
                 __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(entry.attributes, __Derivec_AbbrevAttribute__, j);
-                if(abb.attribute == AT_encoding){
+                if(abb.attribute == AT_name){
+                    char* tmp_name = __derivec_get_name__(f, offset, abb.form);
+                    // we need to distinguish between char and uint8_t for printing
+                    // if the field was declared with type uint8_t/int8_t we print a number
+                    // if it was declared with char we print a character
+                    if(strcmp(tmp_name, "uint8_t") == 0){
+                        member.type = __DERIVEC_TYPE_UINT8__;
+                        found_type = true;
+                    } else if (strcmp(tmp_name, "int8_t") == 0){ 
+                        member.type = __DERIVEC_TYPE_INT8__;
+                        found_type = true;
+                    }
+                    free(tmp_name);
+                }
+                else if(abb.attribute == AT_encoding){
                     assert(abb.form == FORM_data1 && "Expected data1\n");
-                    if(type == __DERIVEC_TYPE_BPTR__){
-                        fread(&ptr_type, 1, 1, f);
+                    if(member.type == __DERIVEC_TYPE_BPTR__){
+                        fread(&member.ptr_type, 1, 1, f);
                     } else{
-                        fread(&type, 1, 1, f);
+                        fread(&member.type, 1, 1, f);
                     }
                     found_type = true;
-                    break;
-                } else if (abb.attribute == AT_type) {
+                }else if(entry.tag == TAG_base_type && abb.attribute == AT_byte_size){
+                    assert(abb.form == FORM_data1 && "Expected data1\n");
+                    fread(&size, 1, 1, f);
+                } 
+                else if (abb.attribute == AT_type) {
                     assert(abb.form == FORM_ref4 && "Expected ref4\n");
                     fread(&member_type_offset, 4, 1, f);
                     fseek(f, offset->cu_offset + member_type_offset, SEEK_SET);
@@ -908,6 +974,21 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
                     __derivec_skip_attribute__(f, abb.form);
                 }
             }
+
+            if(member.type == __DERIVEC_TYPE_UNSIGNED__){
+                if(size == 1) member.type = __DERIVEC_TYPE_UINT8__;
+                else if(size == 2) member.type = __DERIVEC_TYPE_UINT16__;
+                else if(size == 4) member.type = __DERIVEC_TYPE_UINT32__;
+                else if(size == 8) member.type = __DERIVEC_TYPE_UINT64__;
+            } else if (member.type == __DERIVEC_TYPE_SIGNED__) {
+                if(size == 1) member.type = __DERIVEC_TYPE_INT8__;
+                else if(size == 2) member.type = __DERIVEC_TYPE_INT16__;
+                else if(size == 4) member.type = __DERIVEC_TYPE_INT32__;
+                else if(size == 8) member.type = __DERIVEC_TYPE_INT64__;
+            }
+
+
+
             if(next_type) continue;
             break;
         }
@@ -915,26 +996,7 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
 
     fsetpos(f, &pos);
 
-    __Derivec_StructMember__ mem = {0};
-    mem.name = name;
-    mem.offset = member_location;
-    mem.type = type;
-    mem.base_type = ptr_type;
-    __derivec_array_list_append__(st->members, __Derivec_StructMember__, mem);
-}
-
-
-static char* __derivec_get_name__(FILE* f, __Derivec_Offsets__* offsets, uint64_t form){
-    if(form == FORM_strp){
-        uint32_t str_offset = 0;
-        fread(&str_offset, sizeof(str_offset), 1, f);
-        return __derivec_get_string_table_value__(offsets->debug_str_offset, str_offset, f);
-    } else if (form == FORM_string) {
-        return __derivec_get_string__(f);
-    } else{
-        fprintf(stderr, "Expected form strp or string for struct name\n");
-        assert(false && "Not implemented");
-    }
+    __derivec_array_list_append__(st->members, __Derivec_StructMember__, member);
 }
 
 
