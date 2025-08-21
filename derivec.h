@@ -856,7 +856,7 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
         }
         fprintf(stderr, "Could not find struct for typedef %s, 0x%x\n", name, type_offset);
     } else if (entry.tag == TAG_enumeration_type) {
-        for(uint64_t i = 0; i < structs.size; i++){
+        for(uint64_t i = 0; i < enums.size; i++){
             __Derivec_EnumType__* et = &__derivec_array_list_get__(enums, __Derivec_EnumType__, i);
             if(et->offset == type_offset && et->name == NULL){
                 et->name = name;
