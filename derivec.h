@@ -468,6 +468,7 @@ typedef struct {
     uint64_t cu_offset;
     uint64_t debug_str_offset;
     uint64_t debug_line_str_offset;
+    uint64_t debug_str_offsets_offset;
 } __Derivec_Offsets__;
 
 static uint64_t __derivec_uleb128__(FILE *f) {
@@ -766,6 +767,21 @@ static char* __derivec_get_string_table_value__(uint64_t string_table_offset, ui
     return result;
 }
 
+
+static char* __derivec_get_string_offsets_value__(__Derivec_Offsets__* offsets, uint64_t index, FILE* f){
+    fpos_t pos;
+    fgetpos(f, &pos);
+    const int HEADER_SIZE = 8; //assume 32 bit
+    const int STRIDE = 4;
+    fseek(f, offsets->debug_str_offsets_offset + HEADER_SIZE + index * STRIDE, SEEK_SET);
+
+    uint32_t strp_offset = 0;
+    fread(&strp_offset, sizeof(strp_offset),1,f);
+    char* result = __derivec_get_string_table_value__(offsets->debug_str_offset, strp_offset, f);
+    fsetpos(f, &pos);
+    return result;
+}
+
 static char* __derivec_get_name__(FILE* f, __Derivec_Offsets__* offsets, uint64_t form){
     if(form == FORM_strp){
         uint32_t str_offset = 0;
@@ -773,8 +789,28 @@ static char* __derivec_get_name__(FILE* f, __Derivec_Offsets__* offsets, uint64_
         return __derivec_get_string_table_value__(offsets->debug_str_offset, str_offset, f);
     } else if (form == FORM_string) {
         return __derivec_get_string__(f);
-    } else{
-        fprintf(stderr, "Expected form strp or string for struct name\n");
+    } else if(form == FORM_strx1){
+        uint8_t str_index = 0;
+        fread(&str_index, sizeof(str_index), 1, f);
+        return __derivec_get_string_offsets_value__(offsets, str_index, f);
+    } else if(form == FORM_strx2){
+        uint16_t str_index = 0;
+        fread(&str_index, sizeof(str_index), 1, f);
+        return __derivec_get_string_offsets_value__(offsets, str_index, f);
+    } else if(form == FORM_strx3){
+        uint32_t str_index = 0;
+        fread(&str_index, 3, 1, f);
+        return __derivec_get_string_offsets_value__(offsets, str_index, f);
+    } else if(form == FORM_strx4){
+        uint32_t str_index = 0;
+        fread(&str_index, sizeof(str_index), 1, f);
+        return __derivec_get_string_offsets_value__(offsets, str_index, f);
+    } else if(form == FORM_strx){
+        uint64_t str_index = __derivec_uleb128__(f);
+        return __derivec_get_string_offsets_value__(offsets, str_index, f);
+    } 
+    else{
+        fprintf(stderr, "Expected form strp or string for struct name: %s\n", __derivec_form_to_string__(form));
         assert(false && "Not implemented");
     }
 }
@@ -788,9 +824,12 @@ static void __derivec_skip_attribute__(FILE* f, uint64_t form){
         case FORM_data4:
         case FORM_ref4:
         case FORM_strp:
+        case FORM_strx4:
             fseek(f, 4, SEEK_CUR);
             break;
         case FORM_flag:
+        case FORM_strx1:
+        case FORM_addrx1:
         case FORM_data1: {
             uint8_t data = 0;
             fread(&data, sizeof(data), 1, f);
@@ -802,17 +841,27 @@ static void __derivec_skip_attribute__(FILE* f, uint64_t form){
             fread(&data, sizeof(data), 1, f);
             break;
         }
+        case FORM_addrx2:
+        case FORM_strx2:
         case FORM_data2: {
             uint16_t data = 0;
             fread(&data, sizeof(data), 1, f);
             break;
         }
+        case FORM_addrx3:
+        case FORM_strx3:
+            fseek(f, 3, SEEK_CUR);
+            break;
         case FORM_exprloc:{
             uint64_t expr_size = __derivec_uleb128__(f);
             //skip over the expression
             fseek(f, expr_size, SEEK_CUR);
             break;
         }
+        case FORM_loclistx:
+        case FORM_addrx:
+        case FORM_rnglistx:
+        case FORM_strx:
         case FORM_udata:
             __derivec_uleb128__(f);
             break;
@@ -854,7 +903,13 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
                 return;
             }
         }
-        fprintf(stderr, "Could not find struct for typedef %s, 0x%x\n", name, type_offset);
+        //create struct if it doesn't exist
+        __Derivec_StructType__ t = {0};
+        t.offset = type_offset;
+        __derivec_array_list_create_cap__(t.names, char*, 1);
+        __derivec_array_list_append__(t.names, char*, name);
+        __derivec_array_list_create_cap__(t.members, __Derivec_StructMember__, 2);
+        __derivec_array_list_append__(structs, __Derivec_StructType__, t);
     } else if (entry.tag == TAG_enumeration_type) {
         for(uint64_t i = 0; i < enums.size; i++){
             __Derivec_EnumType__* et = &__derivec_array_list_get__(enums, __Derivec_EnumType__, i);
@@ -864,7 +919,13 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
                 return;
             }
         }
-        fprintf(stderr, "Could not find enum for typedef %s\n", name);
+
+        //create enum if it doesn't exist
+        __Derivec_EnumType__ t = {0};
+        t.offset = type_offset;
+        t.name = name;
+        __derivec_array_list_create_cap__(t.members, __Derivec_EnumMember__, 2);
+        __derivec_array_list_append__(enums, __Derivec_EnumType__, t);
     } else if(entry.tag == TAG_union_type){
         fprintf(stderr, "Don't support typedefs for unions yet\n");
         assert(false);
@@ -939,7 +1000,7 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
 
             bool next_type = false;
             int size = 0;
-            for(int j = 0; j < entry.attributes.size; j++){
+            for(uint64_t j = 0; j < entry.attributes.size; j++){
                 __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(entry.attributes, __Derivec_AbbrevAttribute__, j);
                 if(abb.attribute == AT_name){
                     char* tmp_name = __derivec_get_name__(f, offset, abb.form);
@@ -977,12 +1038,8 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
                 } 
                 else if (abb.attribute == AT_type) {
                     assert(abb.form == FORM_ref4 && "Expected ref4\n");
-                    fread(&member_type_offset, 4, 1, f);
-                    fseek(f, offset->cu_offset + member_type_offset, SEEK_SET);
-                    id = __derivec_uleb128__(f);
-                    entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
+                    fread(&member_type_offset, 4, 1, f); 
                     next_type = true;
-                    break;
                 }
                 else{
                     __derivec_skip_attribute__(f, abb.form);
@@ -1003,7 +1060,13 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
 
 
 
-            if(next_type) continue;
+            if(next_type){ 
+                fseek(f, offset->cu_offset + member_type_offset, SEEK_SET);
+                id = __derivec_uleb128__(f);
+                entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
+                continue;
+            }
+
             break;
         }
     }
@@ -1043,6 +1106,26 @@ static void __derivec_replace_struct_offset__(uint64_t struct_start, uint64_t en
     }
 }
 
+
+static bool __derivec_struct_exists(uint64_t offset){
+    for(uint64_t i = 0; i < structs.size; i++){
+        __Derivec_StructType__ t = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
+        if(t.offset == offset) return true;
+    }
+    return false;
+}
+
+
+static bool __derivec_enum_exists(uint64_t offset){
+    for(uint64_t i = 0; i < structs.size; i++){
+        __Derivec_EnumType__ t = __derivec_array_list_get__(structs, __Derivec_EnumType__, i);
+        if(t.offset == offset) return true;
+    }
+    return false;
+}
+
+
+
 static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offsets, int depth){
     while(1){
         uint64_t offset = ftell(f);
@@ -1052,14 +1135,13 @@ static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offse
 
         __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
-
-        if(entry.tag == TAG_structure_type){
+        if(entry.tag == TAG_structure_type && !__derivec_struct_exists(offset - offsets->cu_offset)){
             __Derivec_StructType__ t = {0};
             t.offset = offset - offsets->cu_offset;
             __derivec_array_list_create_cap__(t.names, char*, 1);
             __derivec_array_list_create_cap__(t.members, __Derivec_StructMember__, 2);
             __derivec_array_list_append__(structs, __Derivec_StructType__, t);
-        } else if (entry.tag == TAG_enumeration_type) {
+        } else if (entry.tag == TAG_enumeration_type && !__derivec_enum_exists(offset - offsets->cu_offset)) {
             __Derivec_EnumType__ t = {0};
             t.offset = offset - offsets->cu_offset;
             t.name = NULL;
@@ -1215,6 +1297,8 @@ bool derivec_init(const char* file_name){
     __Derivec_SectionHeader__ debug_line_str = {0};
     __Derivec_SectionHeader__ debug_info = {0};
 
+    uint64_t debug_str_offsets_offset = 0;
+
     bool found_debug = false;
     for(int i = 0; i < h.section_header_entries; i++){
         __Derivec_SectionHeader__ temp = {0};
@@ -1229,6 +1313,8 @@ bool derivec_init(const char* file_name){
         } else if(__derivec_strtable_streq__(f, &st, temp.name,".debug_info")){
             memcpy(&debug_info, &temp, sizeof(__Derivec_SectionHeader__));
             found_debug = true;
+        } else if(__derivec_strtable_streq__(f, &st, temp.name,".debug_str_offsets")){
+            debug_str_offsets_offset = temp.offset;
         }
 
     }
@@ -1253,6 +1339,7 @@ bool derivec_init(const char* file_name){
     __Derivec_Offsets__ offsets = {0};
     offsets.debug_line_str_offset = debug_line_str.offset;
     offsets.debug_str_offset = debug_str.offset;
+    offsets.debug_str_offsets_offset = debug_str_offsets_offset;
 
     while(ftell(f) - start < debug_info.size){
         __DwarfCUHeader__ ch = {0};
