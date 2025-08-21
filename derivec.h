@@ -418,6 +418,7 @@ typedef struct {
 #define __DERIVEC_TYPE_INT16__    0x45
 #define __DERIVEC_TYPE_INT32__    0x46
 #define __DERIVEC_TYPE_INT64__    0x47
+#define __DERIVEC_TYPE_DOUBLE__   0x48
 
 #define __DERIVEC_TYPE_STRUCT__   0x50
 #define __DERIVEC_TYPE_SPTR__     0x51
@@ -441,6 +442,7 @@ typedef struct{
 
 typedef struct {
     uint64_t offset;
+    bool is_struct;
     __Derivec_ArrayList__ names;
     __Derivec_ArrayList__ members;
 } __Derivec_StructType__;
@@ -547,7 +549,7 @@ static bool __derivec_struct_names_eq__(__Derivec_ArrayList__* names, char* type
 
 #define get_struct_member(type, base, offset) ((type)((uint8_t*)base + offset))
 
-
+//TODO: structs or unions declared inside a structure will segfault
 void __derivec_debug__(char* type, void* value, int indent){
     int start_indent = indent;
     bool found_struct = false;
@@ -569,7 +571,7 @@ void __derivec_debug__(char* type, void* value, int indent){
                         if(*get_struct_member(char**, value, mem.offset) == NULL){
                             printf("NULL\n");
                         }
-                        else if(mem.ptr_type == __DERIVEC_TYPE_SCHAR__ || mem.ptr_type == __DERIVEC_TYPE_UCHAR__){
+                        else if(st.is_struct && mem.ptr_type == __DERIVEC_TYPE_SCHAR__ || mem.ptr_type == __DERIVEC_TYPE_UCHAR__){
                             printf("%s\n", *get_struct_member(char**, value, mem.offset));
                         } else{
                             printf("%p\n", get_struct_member(void*, value, mem.offset));
@@ -579,9 +581,12 @@ void __derivec_debug__(char* type, void* value, int indent){
                         printf("%s\n", (*((bool*)value + mem.offset) == 1) ? "true" : "false");
                         break;
                     case __DERIVEC_TYPE_FLOAT__:
-                        printf("%f\n", (double)*((uint8_t*)value + mem.offset));
+                        printf("%f\n", *get_struct_member(float*, value, mem.offset));
                         break;
-                    case 5:
+                    case __DERIVEC_TYPE_DOUBLE__:
+                        printf("%f\n", *get_struct_member(double*, value, mem.offset));
+                        break;
+                    case __DERIVEC_TYPE_SIGNED__:
                         printf("%ld\n", (int64_t)*((uint8_t*)value + mem.offset));
                         break;
                     case __DERIVEC_TYPE_SCHAR__:
@@ -894,7 +899,7 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
 
     __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
-    if(entry.tag == TAG_structure_type){
+    if(entry.tag == TAG_structure_type || entry.tag == TAG_union_type){ 
         for(uint64_t i = 0; i < structs.size; i++){
             __Derivec_StructType__* st = &__derivec_array_list_get__(structs, __Derivec_StructType__, i);
             if(st->offset == type_offset){
@@ -902,10 +907,11 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
                 fsetpos(f, &pos);
                 return;
             }
-        }
+        } 
         //create struct if it doesn't exist
         __Derivec_StructType__ t = {0};
         t.offset = type_offset;
+        t.is_struct = entry.tag == TAG_structure_type;
         __derivec_array_list_create_cap__(t.names, char*, 1);
         __derivec_array_list_append__(t.names, char*, name);
         __derivec_array_list_create_cap__(t.members, __Derivec_StructMember__, 2);
@@ -926,9 +932,6 @@ static void __derivec_add_name_from_typedef__(FILE* f, __Derivec_Offsets__* offs
         t.name = name;
         __derivec_array_list_create_cap__(t.members, __Derivec_EnumMember__, 2);
         __derivec_array_list_append__(enums, __Derivec_EnumType__, t);
-    } else if(entry.tag == TAG_union_type){
-        fprintf(stderr, "Don't support typedefs for unions yet\n");
-        assert(false);
     } else if (entry.tag == TAG_base_type) {
         free(name);
         fsetpos(f, &pos);
@@ -976,7 +979,7 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
 
     bool found_type = false;
     while(!found_type){
-        if (entry.tag == TAG_structure_type) {
+        if (entry.tag == TAG_structure_type || entry.tag == TAG_union_type) {
             member.type = (member.type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_SPTR__ : __DERIVEC_TYPE_STRUCT__;
             // the struct may not be in our structs list yet
             // so we need to store the offset
@@ -986,14 +989,7 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
             member.type = (member.type == __DERIVEC_TYPE_BPTR__) ? __DERIVEC_TYPE_EPTR__ : __DERIVEC_TYPE_ENUM__;
             member.enum_offset = member_type_offset;
             break;
-        }
-        else if (entry.tag == TAG_union_type){
-            //don't support unions yet
-            fsetpos(f, &pos);
-            free(name);
-            return;
-        }
-        else{
+        } else{
             if(entry.tag == TAG_pointer_type){
                 member.type =  __DERIVEC_TYPE_BPTR__;
             }
@@ -1056,6 +1052,8 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
                 else if(size == 2) member.type = __DERIVEC_TYPE_INT16__;
                 else if(size == 4) member.type = __DERIVEC_TYPE_INT32__;
                 else if(size == 8) member.type = __DERIVEC_TYPE_INT64__;
+            } else if (member.type == __DERIVEC_TYPE_FLOAT__ && size == 8) { 
+                member.type = __DERIVEC_TYPE_DOUBLE__;
             }
 
 
@@ -1135,9 +1133,10 @@ static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offse
 
         __Derivec_AbbrevEntry__ entry = __derivec_array_list_get__(abbreviations_table, __Derivec_AbbrevEntry__, id - 1);
 
-        if(entry.tag == TAG_structure_type && !__derivec_struct_exists(offset - offsets->cu_offset)){
+        if((entry.tag == TAG_structure_type ||entry.tag == TAG_union_type) && !__derivec_struct_exists(offset - offsets->cu_offset)){
             __Derivec_StructType__ t = {0};
             t.offset = offset - offsets->cu_offset;
+            t.is_struct = entry.tag == TAG_structure_type;
             __derivec_array_list_create_cap__(t.names, char*, 1);
             __derivec_array_list_create_cap__(t.members, __Derivec_StructMember__, 2);
             __derivec_array_list_append__(structs, __Derivec_StructType__, t);
@@ -1163,7 +1162,8 @@ static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offse
             __Derivec_AbbrevAttribute__ abb = __derivec_array_list_get__(entry.attributes, __Derivec_AbbrevAttribute__, j);
 
             if(abb.attribute == AT_name){
-                switch (entry.tag) {
+                switch (entry.tag) { 
+                    case TAG_union_type:
                     case TAG_structure_type: {
                         __Derivec_StructType__ * st = &__derivec_array_list_get__(structs, __Derivec_StructType__,structs.size - 1);
                         char* name = __derivec_get_name__(f, offsets, abb.form);
@@ -1217,20 +1217,15 @@ static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offse
         }
 
         if(entry.tag == TAG_typedef){
-            //don't support unions yet
+            //ignore forward declared structs
             if(type_offset == 0){
                 free(name);
-            } else{
+            } else{ 
                 __derivec_add_name_from_typedef__(f, offsets, name, type_offset);
             }
         } else if (entry.tag == TAG_member){
-            if(is_struct){
-                __derivec_add_member_to_struct__(f, offsets, name, member_location,
-                    struct_member_type_offset);
-            }else{
-                //free union members
-                free(name);
-            }
+            __derivec_add_member_to_struct__(f, offsets, name, member_location,
+                    struct_member_type_offset); 
         } else if (entry.tag == TAG_enumerator) {
             __derivec_add_member_to_enum__(name, enum_value);
         }
