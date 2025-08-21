@@ -2,6 +2,8 @@
 
 bool derivec_init(const char* file_name);
 
+void derivec_terminate();
+
 void __derivec_debug__(char* type, void* value, int indent);
 
 #define derivec_debug(struct_type, ptr) __derivec_debug__(#struct_type, ptr, 0)
@@ -927,6 +929,7 @@ static void __derivec_add_member_to_struct__(FILE* f, __Derivec_Offsets__* offse
         else if (entry.tag == TAG_union_type){
             //don't support unions yet
             fsetpos(f, &pos);
+            free(name);
             return;
         }
         else{
@@ -1132,14 +1135,20 @@ static void __derivec_get_type_information__(FILE* f, __Derivec_Offsets__* offse
         }
 
         if(entry.tag == TAG_typedef){
+            //don't support unions yet
             if(type_offset == 0){
                 free(name);
             } else{
                 __derivec_add_name_from_typedef__(f, offsets, name, type_offset);
             }
-        } else if (entry.tag == TAG_member && is_struct){
-            __derivec_add_member_to_struct__(f, offsets, name, member_location,
+        } else if (entry.tag == TAG_member){
+            if(is_struct){
+                __derivec_add_member_to_struct__(f, offsets, name, member_location,
                     struct_member_type_offset);
+            }else{
+                //free union members
+                free(name);
+            }
         } else if (entry.tag == TAG_enumerator) {
             __derivec_add_member_to_enum__(name, enum_value);
         }
@@ -1226,6 +1235,7 @@ bool derivec_init(const char* file_name){
 
     if(!found_debug){
         fprintf(stderr, "Failed to find debug info\n");
+        fclose(f);
         return false;
     }
 
@@ -1248,11 +1258,12 @@ bool derivec_init(const char* file_name){
         __DwarfCUHeader__ ch = {0};
         offsets.cu_offset = ftell(f);
         fread(&ch, sizeof(__DwarfCUHeader__), 1, f);
-        printf("Length: %d\n", ch.length);
-        printf("Version: %d\n", ch.version);
-        printf("Type: %s\n", __derivec_header_type_to_string__(ch.type));
-        printf("Address Size: %d\n", ch.addr_size);
-        printf("Abbrev Offset: %d\n", ch.abbrev_offset);
+
+        if(ch.version != 5){
+            fprintf(stderr, "Only Dwarf Version 5 is supported\n");
+            fclose(f);
+            return false;
+        }
         switch(ch.type){
             case UT_compile:
             case UT_partial: {
@@ -1261,8 +1272,6 @@ bool derivec_init(const char* file_name){
                 __derivec_replace_struct_offset__(struct_start, enum_start);
                 struct_start = structs.size;
                 enum_start = enums.size;
-                //print_structs();
-                //print_enums();
                 break;
             }
 
@@ -1270,7 +1279,7 @@ bool derivec_init(const char* file_name){
             case UT_split_compile: {
                 uint64_t id = 0;
                 fread(&id, sizeof(id), 1, f);
-                printf("%lu\n", id);
+                assert(false && "Error this has not been tested\n");
                 break;
             }
             case UT_type:
@@ -1279,8 +1288,7 @@ bool derivec_init(const char* file_name){
                 uint64_t signature = 0;
                 fread(&toff, sizeof(toff), 1, f);
                 fread(&signature, sizeof(signature), 1, f);
-                printf("Type Offset: %d\n", toff);
-                printf("Signature: %lu\n", signature);
+                assert(false && "Error this has not been tested\n");
                 break;
             }
         }
@@ -1290,7 +1298,6 @@ bool derivec_init(const char* file_name){
     return true;
 }
 
-//TODO: FIX memory leaks
 void derivec_terminate(){
     for(uint64_t i = 0; i < structs.size; i++){
         __Derivec_StructType__ t = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
@@ -1300,6 +1307,8 @@ void derivec_terminate(){
         for(uint64_t j = 0; j < t.members.size; j++){
             free(__derivec_array_list_get__(t.members, __Derivec_StructMember__, j).name);
         }
+
+        __derivec_array_list_delete__(t.names);
         __derivec_array_list_delete__(t.members);
     }
     __derivec_array_list_delete__(structs);
