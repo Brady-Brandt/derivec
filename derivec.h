@@ -1,12 +1,13 @@
 #pragma once
+#include <stdint.h>
 
 bool derivec_init(const char* file_name);
 
 void derivec_terminate();
 
-void __derivec_debug__(char* type, void* value, int indent);
+void __derivec_debug__(char* type, void* value, int indent, uint64_t index);
 
-#define derivec_debug(struct_type, ptr) __derivec_debug__(#struct_type, ptr, 0)
+#define derivec_debug(struct_type, ptr) __derivec_debug__(#struct_type, ptr, 0, 0)
 
 #ifdef DERIVEC_IMPLEMENTATION
 #include <assert.h>
@@ -549,114 +550,139 @@ static bool __derivec_struct_names_eq__(__Derivec_ArrayList__* names, char* type
 
 #define get_struct_member(type, base, offset) ((type)((uint8_t*)base + offset))
 
-//TODO: structs or unions declared inside a structure will segfault
-void __derivec_debug__(char* type, void* value, int indent){
-    int start_indent = indent;
-    bool found_struct = false;
-    for(uint64_t i = 0; i < structs.size; i++){
-        __Derivec_StructType__ st = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
-        if(__derivec_struct_names_eq__(&st.names, type)){
-            found_struct = true;
-            printf("%*s {\n", indent, type);
-            indent += 4;
-            for(uint64_t j = 0; j < st.members.size; j++){
-                __Derivec_StructMember__ mem = __derivec_array_list_get__(st.members, __Derivec_StructMember__, j);
-                printf("%*s%s: ", indent," ", mem.name);
-
-                switch (mem.type) {
-                    case __DERIVEC_TYPE_SPTR__:
-                        printf("%p\n", *get_struct_member(uint64_t**, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_BPTR__:
-                        if(*get_struct_member(char**, value, mem.offset) == NULL){
-                            printf("NULL\n");
-                        }
-                        else if(st.is_struct && mem.ptr_type == __DERIVEC_TYPE_SCHAR__ || mem.ptr_type == __DERIVEC_TYPE_UCHAR__){
-                            printf("%s\n", *get_struct_member(char**, value, mem.offset));
-                        } else{
-                            printf("%p\n", get_struct_member(void*, value, mem.offset));
-                        }
-                        break;
-                    case __DERIVEC_TYPE_BOOL__:
-                        printf("%s\n", (*((bool*)value + mem.offset) == 1) ? "true" : "false");
-                        break;
-                    case __DERIVEC_TYPE_FLOAT__:
-                        printf("%f\n", *get_struct_member(float*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_DOUBLE__:
-                        printf("%f\n", *get_struct_member(double*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_SIGNED__:
-                        printf("%ld\n", (int64_t)*((uint8_t*)value + mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_SCHAR__:
-                    case __DERIVEC_TYPE_UCHAR__:
-                        printf("%c\n", (char)*((uint8_t*)value + mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_UNSIGNED__:
-                        printf("%lu\n", (uint64_t)*((uint8_t*)value + mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_UINT8__:
-                        printf("%u\n", *get_struct_member(uint8_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_INT8__:
-                        printf("%d\n", *get_struct_member(int8_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_UINT16__:
-                        printf("%u\n", *get_struct_member(uint16_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_INT16__:
-                        printf("%d\n", *get_struct_member(int16_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_UINT32__:
-                        printf("%u\n", *get_struct_member(uint32_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_INT32__:
-                        printf("%d\n", *get_struct_member(int32_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_UINT64__:
-                        printf("%lu\n", *get_struct_member(uint64_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_INT64__:
-                        printf("%ld\n", *get_struct_member(int64_t*, value, mem.offset));
-                        break;
-                    case __DERIVEC_TYPE_STRUCT__: {
-                        __Derivec_StructType__* nested_struct =
-                            &__derivec_array_list_get__(structs, __Derivec_StructType__, mem.struct_index);
-                        char* name = __derivec_array_list_get__(nested_struct->names, char*, 0);
-                        __derivec_debug__(name, ((uint8_t*)value + mem.offset), indent);
-                        break;
-                    }
-                    case __DERIVEC_TYPE_ENUM__:
-                        __Derivec_EnumType__* e = &__derivec_array_list_get__(enums, __Derivec_EnumType__, mem.enum_index);
-                        bool found_enum = false;
-                        uint64_t enum_value = (uint64_t)*((uint8_t*)value + mem.offset);
-                        for(uint64_t k = 0; k < e->members.size; k++){
-                            __Derivec_EnumMember__ emem = __derivec_array_list_get__(e->members, __Derivec_EnumMember__, k);
-                            if(enum_value == emem.value){
-                                printf("%s\n", emem.name);
-                                found_enum = true;
-                                break;
-                            }
-                        }
-                        if(!found_enum){
-                            printf("%ld\n", enum_value);
-                        }
-                        break;
+void __derivec_print_member__(__Derivec_StructMember__ mem, void* sptr, bool is_struct){
+    switch (mem.type) {
+        case __DERIVEC_TYPE_SPTR__:
+            printf("%p\n", *get_struct_member(uint64_t**, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_BPTR__:
+            if(*get_struct_member(char**, sptr, mem.offset) == NULL){
+                printf("NULL\n");
+            }
+            else if(is_struct && mem.ptr_type == __DERIVEC_TYPE_SCHAR__ || mem.ptr_type == __DERIVEC_TYPE_UCHAR__){
+                printf("%s\n", *get_struct_member(char**, sptr, mem.offset));
+            } else{
+                printf("%p\n", get_struct_member(void*, sptr, mem.offset));
+            }
+            break;
+        case __DERIVEC_TYPE_BOOL__:
+            printf("%s\n", (*((bool*)sptr + mem.offset) == 1) ? "true" : "false");
+            break;
+        case __DERIVEC_TYPE_FLOAT__:
+            printf("%f\n", *get_struct_member(float*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_DOUBLE__:
+            printf("%f\n", *get_struct_member(double*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_SIGNED__:
+            printf("%ld\n", (int64_t)*((uint8_t*)sptr + mem.offset));
+            break;
+        case __DERIVEC_TYPE_SCHAR__:
+        case __DERIVEC_TYPE_UCHAR__:
+            printf("%c\n", (char)*((uint8_t*)sptr + mem.offset));
+            break;
+        case __DERIVEC_TYPE_UNSIGNED__:
+            printf("%lu\n", (uint64_t)*((uint8_t*)sptr + mem.offset));
+            break;
+        case __DERIVEC_TYPE_UINT8__:
+            printf("%u\n", *get_struct_member(uint8_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_INT8__:
+            printf("%d\n", *get_struct_member(int8_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_UINT16__:
+            printf("%u\n", *get_struct_member(uint16_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_INT16__:
+            printf("%d\n", *get_struct_member(int16_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_UINT32__:
+            printf("%u\n", *get_struct_member(uint32_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_INT32__:
+            printf("%d\n", *get_struct_member(int32_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_UINT64__:
+            printf("%lu\n", *get_struct_member(uint64_t*, sptr, mem.offset));
+            break;
+        case __DERIVEC_TYPE_INT64__:
+            printf("%ld\n", *get_struct_member(int64_t*, sptr, mem.offset));
+            break; 
+        case __DERIVEC_TYPE_ENUM__:
+            __Derivec_EnumType__* e = &__derivec_array_list_get__(enums, __Derivec_EnumType__, mem.enum_index);
+            bool found_enum = false;
+            uint64_t enum_sptr = (uint64_t)*((uint8_t*)sptr + mem.offset);
+            for(uint64_t k = 0; k < e->members.size; k++){
+                __Derivec_EnumMember__ emem = __derivec_array_list_get__(e->members, __Derivec_EnumMember__, k);
+                if(enum_sptr == emem.value){
+                    printf("%s\n", emem.name);
+                    found_enum = true;
+                    break;
                 }
             }
-            printf("%*s}\n", start_indent," ");
+            if(!found_enum){
+                printf("%ld\n", enum_sptr);
+            }
             break;
-        }
-    }
-    if(!found_struct){
-        printf("Couldn't find struct of type %s\n", type);
-
     }
 }
 
 
-#define derivec_debug(struct_type, ptr) __derivec_debug__(#struct_type, ptr, 0)
+void __derivec_debug__(char* type, void* value, int indent, uint64_t index){
+    int start_indent = indent;
+    bool found_struct = false;
+
+    __Derivec_StructType__ st;
+    char* str_name = NULL;
+    if(type == NULL){
+        if(index < structs.size - 1){
+            st = __derivec_array_list_get__(structs, __Derivec_StructType__, index);
+            if(st.names.size > 0){
+                str_name = __derivec_array_list_get__(st.names, char*, 0);
+            }
+            found_struct = true;
+        }
+    } else{
+        for(uint64_t i = 0; i < structs.size; i++){
+            st = __derivec_array_list_get__(structs, __Derivec_StructType__, i);
+            if(__derivec_struct_names_eq__(&st.names, type)){
+                str_name = type;
+                found_struct = true;
+                break;
+            }
+        }
+    }
+
+
+    if(!found_struct){
+        printf("Couldn't find struct or union of type %s\n", type);
+        return;
+
+    }
+
+    if(str_name == NULL){
+        printf(" {\n");
+    } else{
+        printf("%*s {\n", indent, str_name);
+    }
+    indent += 4;
+    for(uint64_t j = 0; j < st.members.size; j++){
+        __Derivec_StructMember__ mem = __derivec_array_list_get__(st.members, __Derivec_StructMember__, j);
+
+        if(mem.name == NULL){
+            printf("%*s%s: ", indent,"", "anon");
+        } else{
+            printf("%*s%s: ", indent,"", mem.name);
+        }
+        if(mem.type == __DERIVEC_TYPE_STRUCT__){
+            __derivec_debug__(NULL, ((uint8_t*)value + mem.offset), indent, mem.struct_index);
+        } else{
+            __derivec_print_member__(mem, value, st.is_struct);
+        } 
+    }
+    printf("%*s}\n", start_indent," "); 
+}
+
 
 static void __derivec_add_abbreviation_entry__(uint64_t id, uint64_t tag, uint8_t has_children){
     __derivec_array_list_reserve__(abbreviations_table, __Derivec_AbbrevEntry__, id);
